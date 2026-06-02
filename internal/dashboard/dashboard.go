@@ -424,6 +424,40 @@ func Start(cfg *config.Config, srv *server.Server, version string) {
 		jsonOK(w, map[string]any{"ok": true})
 	})
 
+	mux.HandleFunc("/api/records/add", func(w http.ResponseWriter, r *http.Request) {
+		if !requireAuth(w, r, cfg) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Name  string `json:"name"`
+			Type  string `json:"type"`
+			Value string `json:"value"`
+			TTL   uint32 `json:"ttl"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.Name == "" || body.Type == "" || body.Value == "" {
+			http.Error(w, "name, type, and value are required", http.StatusBadRequest)
+			return
+		}
+		if err := srv.AddRecord(config.RecordConfig{
+			Name:  body.Name,
+			Type:  body.Type,
+			Value: body.Value,
+			TTL:   body.TTL,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		jsonOK(w, map[string]any{"ok": true})
+	})
+
 	mux.HandleFunc("/api/update", func(w http.ResponseWriter, r *http.Request) {
 		if !requireAuth(w, r, cfg) {
 			return

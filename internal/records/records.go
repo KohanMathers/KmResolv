@@ -65,6 +65,11 @@ func filterByType(rrs []dns.RR, qtype uint16) []dns.RR {
 	return out
 }
 
+func ValidateRecord(r config.RecordConfig) error {
+	_, err := buildRR(r)
+	return err
+}
+
 func buildRR(r config.RecordConfig) (dns.RR, error) {
 	rr := dns.RR{
 		Name:  r.Name,

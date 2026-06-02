@@ -354,6 +354,15 @@ func (s *Server) ConfigRecords() []config.RecordConfig {
 	return s.cfg.Records
 }
 
+func (s *Server) AddRecord(r config.RecordConfig) error {
+	if err := records.ValidateRecord(r); err != nil {
+		return err
+	}
+	s.cfg.Records = append(s.cfg.Records, r)
+	s.records = records.NewRecordStore(s.cfg)
+	return s.cfg.Save()
+}
+
 func (s *Server) RemoveRecord(name, rtype string) error {
 	updated := s.cfg.Records[:0]
 	for _, rec := range s.cfg.Records {
