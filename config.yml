@@ -55,12 +55,15 @@ resolver:
 # negative_ttl: Seconds to cache NXDOMAIN responses                  #
 # prefetch:     Refresh near-expired entries before they expire      #
 # min_ttl:      TTL floor; prevents caching with very short TTLs     #
+# max_size:     Maximum number of cached entries (0 = unlimited)     #
+#               When full, the soonest-to-expire entry is replaced.  #
 ######################################################################
     cache:
         enabled: true
         negative_ttl: 300
         prefetch: true
         min_ttl: 30
+        max_size: 0
 
 ######################################################################
 # FORWARDER                                                          #

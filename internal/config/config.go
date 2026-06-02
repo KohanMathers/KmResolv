@@ -56,6 +56,7 @@ type CacheConfig struct {
 	NegativeTTL int  `yaml:"negative_ttl"`
 	Prefetch    bool `yaml:"prefetch"`
 	MinTTL      int  `yaml:"min_ttl"`
+	MaxSize     int  `yaml:"max_size"`
 }
 
 type RecordConfig struct {

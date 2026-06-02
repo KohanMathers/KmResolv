@@ -37,13 +37,22 @@ type cacheShard struct {
 }
 
 type Cache struct {
-	shards     [numShards]cacheShard
-	prefetchFn PrefetchFn
-	minTTL     uint32
+	shards      [numShards]cacheShard
+	prefetchFn  PrefetchFn
+	minTTL      uint32
+	maxPerShard int
 }
 
 func (c *Cache) SetMinTTL(n uint32) {
 	c.minTTL = n
+}
+
+func (c *Cache) SetMaxSize(n int) {
+	if n > 0 {
+		c.maxPerShard = (n + numShards - 1) / numShards
+	} else {
+		c.maxPerShard = 0
+	}
 }
 
 func shardIdx(k cacheKey) uint32 {
@@ -161,6 +170,19 @@ func (c *Cache) Set(name string, qtype uint16, msg *dns.Message) {
 	k := cacheKey{name, qtype}
 	s := c.shard(k)
 	s.mu.Lock()
+	if c.maxPerShard > 0 && len(s.entries) >= c.maxPerShard {
+		if _, exists := s.entries[k]; !exists {
+			var evictKey cacheKey
+			var earliest time.Time
+			for ek, ee := range s.entries {
+				if earliest.IsZero() || ee.expires.Before(earliest) {
+					earliest = ee.expires
+					evictKey = ek
+				}
+			}
+			delete(s.entries, evictKey)
+		}
+	}
 	s.entries[k] = &cacheEntry{
 		msg:     msg,
 		expires: now.Add(time.Duration(ttl) * time.Second),

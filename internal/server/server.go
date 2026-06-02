@@ -87,6 +87,7 @@ func New(cfg *config.Config) *Server {
 		s.limiter = newRateLimiter(cfg.Resolver.RateLimit.QPS, cfg.Resolver.RateLimit.Burst)
 	}
 	s.cache.SetMinTTL(uint32(cfg.Resolver.Cache.MinTTL))
+	s.cache.SetMaxSize(cfg.Resolver.Cache.MaxSize)
 	s.cache.SetPrefetchFn(func(name string, qtype uint16) (*dns.Message, error) {
 		if s.cfg.Resolver.Forwarder.Enabled {
 			msg, err := s.resolveViaForwarder(name, qtype)
