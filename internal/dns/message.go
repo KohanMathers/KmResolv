@@ -7,14 +7,29 @@ import (
 )
 
 const (
-	TypeA     = 1
-	TypeNS    = 2
-	TypeCNAME = 5
-	TypeSOA   = 6
-	TypeAAAA  = 28
-	TypeMX    = 15
-	TypeTXT   = 16
-	ClassIN   = 1
+	TypeA          = 1
+	TypeNS         = 2
+	TypeCNAME      = 5
+	TypeSOA        = 6
+	TypePTR        = 12
+	TypeMX         = 15
+	TypeTXT        = 16
+	TypeAAAA       = 28
+	TypeLOC        = 29
+	TypeSRV        = 33
+	TypeNAPTR      = 35
+	TypeCERT       = 37
+	TypeDS         = 43
+	TypeSSHFP      = 44
+	TypeDNSKEY     = 48
+	TypeTLSA       = 52
+	TypeSMIMEA     = 53
+	TypeOPENPGPKEY = 61
+	TypeSVCB       = 64
+	TypeHTTPS      = 65
+	TypeURI        = 256
+	TypeCAA        = 257
+	ClassIN        = 1
 )
 
 const (
@@ -258,7 +273,7 @@ func packName(name string) []byte {
 
 func packRdata(rr RR, raw []byte) []byte {
 	switch rr.Type {
-	case TypeNS, TypeCNAME, TypeMX:
+	case TypeNS, TypeCNAME, TypeMX, TypePTR:
 		nameOffset := rr.Offset
 		if rr.Type == TypeMX {
 			nameOffset += 2

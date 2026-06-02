@@ -382,18 +382,48 @@ func typeName(t uint16) string {
 	switch t {
 	case dns.TypeA:
 		return "A"
-	case dns.TypeAAAA:
-		return "AAAA"
 	case dns.TypeNS:
 		return "NS"
 	case dns.TypeCNAME:
 		return "CNAME"
+	case dns.TypeSOA:
+		return "SOA"
+	case dns.TypePTR:
+		return "PTR"
 	case dns.TypeMX:
 		return "MX"
 	case dns.TypeTXT:
 		return "TXT"
-	case dns.TypeSOA:
-		return "SOA"
+	case dns.TypeAAAA:
+		return "AAAA"
+	case dns.TypeLOC:
+		return "LOC"
+	case dns.TypeSRV:
+		return "SRV"
+	case dns.TypeNAPTR:
+		return "NAPTR"
+	case dns.TypeCERT:
+		return "CERT"
+	case dns.TypeDS:
+		return "DS"
+	case dns.TypeSSHFP:
+		return "SSHFP"
+	case dns.TypeDNSKEY:
+		return "DNSKEY"
+	case dns.TypeTLSA:
+		return "TLSA"
+	case dns.TypeSMIMEA:
+		return "SMIMEA"
+	case dns.TypeOPENPGPKEY:
+		return "OPENPGPKEY"
+	case dns.TypeSVCB:
+		return "SVCB"
+	case dns.TypeHTTPS:
+		return "HTTPS"
+	case dns.TypeURI:
+		return "URI"
+	case dns.TypeCAA:
+		return "CAA"
 	default:
 		return fmt.Sprintf("%d", t)
 	}

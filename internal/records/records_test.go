@@ -141,9 +141,9 @@ func TestBuildRR_MXInvalid(t *testing.T) {
 }
 
 func TestBuildRR_UnsupportedType(t *testing.T) {
-	_, err := buildRR(config.RecordConfig{Name: "host.com", Type: "PTR", Value: "1.0.0.127.in-addr.arpa"})
+	_, err := buildRR(config.RecordConfig{Name: "host.com", Type: "BOGUS", Value: "whatever"})
 	if err == nil {
-		t.Error("expected error for unsupported record type PTR")
+		t.Error("expected error for unsupported record type BOGUS")
 	}
 }
 

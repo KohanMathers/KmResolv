@@ -129,7 +129,7 @@ func TestLoadConfigInvalidFilterMode(t *testing.T) {
 	}
 }
 
-func TestLoadConfigInvalidRecordType(t *testing.T) {
+func TestLoadConfigUnknownRecordTypeIsAllowed(t *testing.T) {
 	path := writeConfig(t, `
 server:
   port: 53
@@ -142,8 +142,8 @@ records:
     value: "1.2.3.4"
 `)
 	_, err := LoadConfig(path)
-	if err == nil {
-		t.Fatal("unsupported record type should fail validation")
+	if err != nil {
+		t.Fatalf("unknown record type should not fail config load: %v", err)
 	}
 }
 
@@ -166,7 +166,10 @@ records:
 }
 
 func TestLoadConfigSupportedRecordTypes(t *testing.T) {
-	for _, rtype := range []string{"A", "AAAA", "CNAME", "TXT", "MX"} {
+	for _, rtype := range []string{"A", "AAAA", "CNAME", "TXT", "MX",
+		"PTR", "NS", "SRV", "CAA", "CERT", "DNSKEY", "DS",
+		"HTTPS", "SVCB", "LOC", "NAPTR", "OPENPGPKEY", "SMIMEA",
+		"SSHFP", "TLSA", "URI"} {
 		path := writeConfig(t, fmt.Sprintf(`
 server:
   port: 53
@@ -278,10 +281,10 @@ func TestValidate(t *testing.T) {
 		t.Error("invalid filter mode should fail validation")
 	}
 
-	badRecordType := valid
-	badRecordType.Records = []RecordConfig{{Name: "t.com", Type: "PTR", Value: "1.0.0.1.in-addr.arpa"}}
-	if err := badRecordType.validate(); err == nil {
-		t.Error("unsupported record type should fail validation")
+	unknownType := valid
+	unknownType.Records = []RecordConfig{{Name: "t.com", Type: "BOGUS", Value: "x"}}
+	if err := unknownType.validate(); err != nil {
+		t.Errorf("unknown record type should pass validation (skipped at runtime): %v", err)
 	}
 
 	missingRecordName := valid

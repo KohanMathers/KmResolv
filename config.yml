@@ -58,7 +58,7 @@ resolver:
 # CUSTOM RECORDS                                                     #
 # Define local DNS records answered directly by kmresolv.            #
 # name:  Hostname to resolve                                         #
-# type:  Record type - A, AAAA, CNAME, TXT, or MX                    #
+# type:  Record type - all standard types through RFC 9460           #
 # ttl:   Time-to-live in seconds                                     #
 # value: IP address or hostname target for this record               #
 ######################################################################
