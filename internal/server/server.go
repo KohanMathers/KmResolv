@@ -23,8 +23,9 @@ type Server struct {
 	filter   *filter.Filter
 	records  *records.RecordStore
 	qlog     *QueryLog
-	pool     *udpPool
-	rawPool  sync.Pool
+	pool    *connPool
+	tcpPool *connPool
+	rawPool sync.Pool
 	inflight sync.Map
 	sem      chan struct{}
 
@@ -45,7 +46,8 @@ func New(cfg *config.Config) *Server {
 		records:   records.NewRecordStore(cfg),
 		qlog:      newQueryLog(500),
 		cache:     cache.NewCache(),
-		pool:      newUDPPool(),
+		pool:    newConnPool("udp", poolSizePerServer),
+		tcpPool: newConnPool("tcp", tcpPoolSizePerServer),
 		startTime: time.Now(),
 	}
 	s.rawPool.New = func() any { return make([]byte, udpBufSize) }

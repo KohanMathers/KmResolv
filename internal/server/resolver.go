@@ -311,35 +311,53 @@ func (s *Server) query(server, name string, qtype uint16) (*dns.Message, error) 
 
 func (s *Server) queryTCP(server, name string, qtype uint16) (*dns.Message, error) {
 	timeout := time.Duration(s.cfg.Resolver.Timeout) * time.Second
-	conn, err := net.DialTimeout("tcp", server, timeout)
+	conn, err := s.tcpPool.get(server, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("tcp dial: %w", err)
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout))
+	failed := true
+	defer func() { s.tcpPool.put(server, conn, failed) }()
 
 	req := s.buildQuery(name, qtype)
+	req.ID = conn.nextID
+	conn.nextID++
 	packed, err := req.Pack()
 	if err != nil {
 		return nil, err
 	}
 
-	length := make([]byte, 2)
-	binary.BigEndian.PutUint16(length, uint16(len(packed)))
-	if _, err := conn.Write(append(length, packed...)); err != nil {
+	var length [2]byte
+	binary.BigEndian.PutUint16(length[:], uint16(len(packed)))
+	if _, err := conn.Write(append(length[:], packed...)); err != nil {
 		return nil, fmt.Errorf("tcp write: %w", err)
 	}
 
-	if _, err := io.ReadFull(conn, length); err != nil {
+	if _, err := io.ReadFull(conn, length[:]); err != nil {
 		return nil, fmt.Errorf("tcp read length: %w", err)
 	}
-	msgLen := int(binary.BigEndian.Uint16(length))
+	msgLen := int(binary.BigEndian.Uint16(length[:]))
 	buf := make([]byte, msgLen)
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return nil, fmt.Errorf("tcp read body: %w", err)
 	}
 
-	return dns.ParseMessage(buf)
+	resp, err := dns.ParseMessage(buf)
+	if err != nil {
+		return nil, fmt.Errorf("tcp parse: %w", err)
+	}
+	if resp.ID != req.ID {
+		return nil, fmt.Errorf("tcp ID mismatch: got %d want %d", resp.ID, req.ID)
+	}
+	if resp.Rcode() == dns.RcodeNXDomain {
+		failed = false
+		return nil, fmt.Errorf("NXDOMAIN: %s does not exist", name)
+	}
+	if resp.Rcode() != dns.RcodeNoError {
+		failed = false
+		return nil, fmt.Errorf("rcode %d from %s (tcp)", resp.Rcode(), server)
+	}
+	failed = false
+	return resp, nil
 }
 
 func extractNS(m *dns.Message) []string {

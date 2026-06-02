@@ -8,11 +8,9 @@ import (
 )
 
 const poolSizePerServer = 16
+const tcpPoolSizePerServer = 4
 const poolNumShards = 16
 
-// pooledConn wraps a UDP connection with a per-connection sequential ID
-// counter. Because the pool never returns the same connection to two callers
-// concurrently, nextID requires no synchronisation.
 type pooledConn struct {
 	net.Conn
 	nextID uint16
@@ -23,12 +21,14 @@ type poolShard struct {
 	conns map[string][]*pooledConn
 }
 
-type udpPool struct {
-	shards [poolNumShards]poolShard
+type connPool struct {
+	network      string
+	maxPerServer int
+	shards       [poolNumShards]poolShard
 }
 
-func newUDPPool() *udpPool {
-	p := &udpPool{}
+func newConnPool(network string, maxPerServer int) *connPool {
+	p := &connPool{network: network, maxPerServer: maxPerServer}
 	for i := range p.shards {
 		p.shards[i].conns = make(map[string][]*pooledConn)
 	}
@@ -44,11 +44,11 @@ func poolShardIdx(server string) uint32 {
 	return h & (poolNumShards - 1)
 }
 
-func (p *udpPool) shard(server string) *poolShard {
+func (p *connPool) shard(server string) *poolShard {
 	return &p.shards[poolShardIdx(server)]
 }
 
-func (p *udpPool) get(server string, timeout time.Duration) (*pooledConn, error) {
+func (p *connPool) get(server string, timeout time.Duration) (*pooledConn, error) {
 	s := p.shard(server)
 	s.mu.Lock()
 	list := s.conns[server]
@@ -61,7 +61,7 @@ func (p *udpPool) get(server string, timeout time.Duration) (*pooledConn, error)
 	}
 	s.mu.Unlock()
 
-	conn, err := net.DialTimeout("udp", server, timeout)
+	conn, err := net.DialTimeout(p.network, server, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (p *udpPool) get(server string, timeout time.Duration) (*pooledConn, error)
 	return &pooledConn{Conn: conn, nextID: uint16(rand.Uint32())}, nil
 }
 
-func (p *udpPool) put(server string, pc *pooledConn, failed bool) {
+func (p *connPool) put(server string, pc *pooledConn, failed bool) {
 	if failed {
 		pc.Close()
 		return
@@ -77,7 +77,7 @@ func (p *udpPool) put(server string, pc *pooledConn, failed bool) {
 	pc.SetDeadline(time.Time{})
 	s := p.shard(server)
 	s.mu.Lock()
-	if len(s.conns[server]) < poolSizePerServer {
+	if len(s.conns[server]) < p.maxPerServer {
 		s.conns[server] = append(s.conns[server], pc)
 		s.mu.Unlock()
 		return
