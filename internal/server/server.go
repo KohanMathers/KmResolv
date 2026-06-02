@@ -31,6 +31,7 @@ type Server struct {
 	dotPool   *connPool
 	dohClient *http.Client
 	limiter   *rateLimiter
+	acl       *compiledACL
 	history   *statsHistory
 	dnssecVal *dnssec.Validator
 	rawPool   sync.Pool
@@ -86,6 +87,7 @@ func New(cfg *config.Config) *Server {
 	if cfg.Resolver.RateLimit.Enabled {
 		s.limiter = newRateLimiter(cfg.Resolver.RateLimit.QPS, cfg.Resolver.RateLimit.Burst)
 	}
+	s.acl = newCompiledACL(cfg.Resolver.ACL)
 	s.cache.SetMinTTL(uint32(cfg.Resolver.Cache.MinTTL))
 	s.cache.SetMaxSize(cfg.Resolver.Cache.MaxSize)
 	s.cache.SetPrefetchFn(func(name string, qtype uint16) (*dns.Message, error) {
@@ -176,8 +178,16 @@ func (s *Server) Start() error {
 
 func (s *Server) handleQuery(conn net.PacketConn, src net.Addr, raw []byte) {
 	start := time.Now()
+	ip := sourceIP(src)
+	if !s.acl.allowed(ip) {
+		logger.LogDebug("ACL denied query from %s", ip)
+		msg, err := dns.ParseMessage(raw)
+		if err == nil {
+			conn.WriteTo(refused(msg), src)
+		}
+		return
+	}
 	if s.limiter != nil {
-		ip := sourceIP(src)
 		if !s.limiter.allow(ip) {
 			logger.LogDebug("rate limited query from %s", ip)
 			return
@@ -431,6 +441,17 @@ func nxdomain(req *dns.Message) []byte {
 	resp.SetQR(true)
 	resp.SetRA(true)
 	resp.SetRcode(dns.RcodeNXDomain)
+	resp.Questions = req.Questions
+	packed, _ := resp.Pack()
+	return packed
+}
+
+func refused(req *dns.Message) []byte {
+	resp := &dns.Message{}
+	resp.ID = req.ID
+	resp.SetQR(true)
+	resp.SetRA(true)
+	resp.SetRcode(dns.RcodeRefused)
 	resp.Questions = req.Questions
 	packed, _ := resp.Pack()
 	return packed

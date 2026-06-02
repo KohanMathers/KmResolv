@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -37,6 +38,17 @@ type ResolverConfig struct {
 	RateLimit        RateLimitConfig `yaml:"rate_limit"`
 	Cache            CacheConfig     `yaml:"cache"`
 	Forwarder        ForwarderConfig `yaml:"forwarder"`
+	ACL              ACLConfig       `yaml:"acl"`
+}
+
+type ACLConfig struct {
+	Default string    `yaml:"default"`
+	Rules   []ACLRule `yaml:"rules"`
+}
+
+type ACLRule struct {
+	Subnet string `yaml:"subnet"`
+	Action string `yaml:"action"`
 }
 
 type RateLimitConfig struct {
@@ -107,6 +119,7 @@ func defaults() Config {
 			LogLevel: "info",
 		},
 		Resolver: ResolverConfig{
+			ACL: ACLConfig{Default: "allow"},
 			Timeout:          3,
 			AttemptTimeoutMs: 800,
 			MaxDepth:         20,
@@ -177,6 +190,18 @@ func LoadConfig(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port %d out of range", c.Server.Port)
+	}
+	if d := strings.ToLower(c.Resolver.ACL.Default); d != "" && d != "allow" && d != "deny" {
+		return fmt.Errorf("resolver.acl.default must be allow or deny")
+	}
+	for i, r := range c.Resolver.ACL.Rules {
+		a := strings.ToLower(r.Action)
+		if a != "allow" && a != "deny" {
+			return fmt.Errorf("resolver.acl.rules[%d].action must be allow or deny", i)
+		}
+		if _, _, err := net.ParseCIDR(r.Subnet); err != nil {
+			return fmt.Errorf("resolver.acl.rules[%d].subnet %q: %w", i, r.Subnet, err)
+		}
 	}
 	if c.Resolver.RateLimit.QPS < 0 {
 		return fmt.Errorf("resolver.rate_limit.qps must be >= 0")

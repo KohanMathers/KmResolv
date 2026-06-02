@@ -2,9 +2,47 @@ package server
 
 import (
 	"net"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/kohanmathers/kmresolv/internal/config"
 )
+
+type aclRule struct {
+	ipNet *net.IPNet
+	allow bool
+}
+
+type compiledACL struct {
+	rules        []aclRule
+	defaultAllow bool
+}
+
+func newCompiledACL(cfg config.ACLConfig) *compiledACL {
+	a := &compiledACL{defaultAllow: strings.ToLower(cfg.Default) != "deny"}
+	for _, r := range cfg.Rules {
+		_, ipNet, err := net.ParseCIDR(r.Subnet)
+		if err != nil {
+			continue
+		}
+		a.rules = append(a.rules, aclRule{ipNet: ipNet, allow: strings.ToLower(r.Action) == "allow"})
+	}
+	return a
+}
+
+func (a *compiledACL) allowed(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return a.defaultAllow
+	}
+	for _, r := range a.rules {
+		if r.ipNet.Contains(ip) {
+			return r.allow
+		}
+	}
+	return a.defaultAllow
+}
 
 const rateLimitIdleTTL = 10 * time.Minute
 

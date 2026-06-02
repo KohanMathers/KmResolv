@@ -6,6 +6,7 @@ A self-hosted recursive DNS resolver with ad/tracker filtering, a web dashboard,
 - **Response cache** — TTL-aware cache with negative caching and background prefetch
 - **TCP fallback** — retries truncated UDP responses over TCP automatically
 - **Rate limiting** — per-source-IP token bucket to protect against noisy clients and accidental open resolver exposure
+- **Access control** — subnet-based allow/deny ACL (first-match-wins) with a configurable default action
 - **Filtering** — blacklist or whitelist mode; loads inline domains and remote/local host-format lists (e.g. StevenBlack/hosts)
 - **Local records** — define custom DNS records in config (all standard types through RFC 9460) for your home network
 - **Web dashboard** — query log, stats, block/unblock controls, and cache management behind optional basic auth
@@ -67,6 +68,14 @@ resolver:
     negative_ttl: 300
     prefetch: true
     min_ttl: 30
+    max_size: 0            # max cached entries (0 = unlimited); evicts soonest-to-expire when full
+  acl:
+    default: allow         # action for clients not matched by any rule: allow | deny
+    rules:
+      # - subnet: 127.0.0.0/8
+      #   action: allow
+      # - subnet: 0.0.0.0/0
+      #   action: deny
   forwarder:
     enabled: false
     servers:

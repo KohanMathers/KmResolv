@@ -39,6 +39,7 @@ const (
 	RcodeNoError  = 0
 	RcodeServFail = 2
 	RcodeNXDomain = 3
+	RcodeRefused  = 5
 )
 
 type Header struct {

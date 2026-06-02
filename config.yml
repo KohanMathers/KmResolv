@@ -66,6 +66,26 @@ resolver:
         max_size: 0
 
 ######################################################################
+# ACCESS CONTROL                                                     #
+# Restrict which client subnets may query kmresolv.                  #
+# Rules are evaluated in order; first match wins.                    #
+# default: allow - permit clients not matched by any rule (default)  #
+# default: deny  - refuse clients not matched by any rule            #
+# action: allow  - permit queries from matching subnet               #
+# action: deny   - send REFUSED to matching subnet                   #
+######################################################################
+    acl:
+        default: allow
+        rules: []
+        #rules:
+        #    - subnet: 127.0.0.0/8
+        #      action: allow
+        #    - subnet: 192.168.0.0/16
+        #      action: allow
+        #    - subnet: 0.0.0.0/0
+        #      action: deny
+
+######################################################################
 # FORWARDER                                                          #
 # enabled:               Forward queries to configured upstreams     #
 # servers:               Upstream resolvers, tried in order.         #
