@@ -74,8 +74,10 @@ records:
 # mode: whitelist - Allow only listed; block everything else         #
 # mode: off       - Disable filtering entirely                       #
 #                                                                    #
-# inline: Domains to filter, listed directly in this file            #
-# lists:  Remote URLs or local file paths to blocklist files         #
+# inline:                Domains to filter, listed directly here     #
+# lists:                 Remote URLs or local file paths to lists    #
+# reload_interval_hours: Re-fetch lists every N hours, 0 = disabled  #
+#                        Also triggered on SIGHUP                    #
 ######################################################################
 filtering:
     mode: "off"
@@ -85,6 +87,7 @@ filtering:
     lists:
         - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
         - /etc/kmresolv/custom.list
+    reload_interval_hours: 0
 
 ######################################################################
 # DASHBOARD                                                          #

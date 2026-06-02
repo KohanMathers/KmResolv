@@ -3,6 +3,9 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/kohanmathers/kmresolv/internal/config"
 	"github.com/kohanmathers/kmresolv/internal/dashboard"
@@ -32,6 +35,15 @@ func cmdServe(args []string) {
 			logger.LogWarn("minecraft server failed to start: %v", err)
 		}
 	}
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGHUP)
+	go func() {
+		for range sigs {
+			logger.LogInfo("SIGHUP: reloading filter lists")
+			srv.ReloadFilters()
+		}
+	}()
 
 	if err := srv.Start(); err != nil {
 		log.Fatal(err)

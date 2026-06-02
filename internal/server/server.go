@@ -23,9 +23,9 @@ type Server struct {
 	filter   *filter.Filter
 	records  *records.RecordStore
 	qlog     *QueryLog
-	pool    *connPool
-	tcpPool *connPool
-	rawPool sync.Pool
+	pool     *connPool
+	tcpPool  *connPool
+	rawPool  sync.Pool
 	inflight sync.Map
 	sem      chan struct{}
 
@@ -46,8 +46,8 @@ func New(cfg *config.Config) *Server {
 		records:   records.NewRecordStore(cfg),
 		qlog:      newQueryLog(500),
 		cache:     cache.NewCache(),
-		pool:    newConnPool("udp", poolSizePerServer),
-		tcpPool: newConnPool("tcp", tcpPoolSizePerServer),
+		pool:      newConnPool("udp", poolSizePerServer),
+		tcpPool:   newConnPool("tcp", tcpPoolSizePerServer),
 		startTime: time.Now(),
 	}
 	s.rawPool.New = func() any { return make([]byte, udpBufSize) }
@@ -75,7 +75,24 @@ func New(cfg *config.Config) *Server {
 	return s
 }
 
+func (s *Server) ReloadFilters() {
+	s.filter.Reload(s.cfg)
+}
+
+func (s *Server) filterReloadLoop() {
+	ticker := time.NewTicker(time.Duration(s.cfg.Filtering.ReloadIntervalHours) * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		logger.LogInfo("periodic filter reload")
+		s.filter.Reload(s.cfg)
+	}
+}
+
 func (s *Server) Start() error {
+	if s.cfg.Filtering.ReloadIntervalHours > 0 {
+		go s.filterReloadLoop()
+	}
+
 	conn, err := net.ListenPacket("udp", s.cfg.Addr())
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)

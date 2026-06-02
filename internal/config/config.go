@@ -57,9 +57,10 @@ type RecordConfig struct {
 }
 
 type FilterConfig struct {
-	Mode   string   `yaml:"mode"`
-	Inline []string `yaml:"inline"`
-	Lists  []string `yaml:"lists"`
+	Mode                string   `yaml:"mode"`
+	Inline              []string `yaml:"inline"`
+	Lists               []string `yaml:"lists"`
+	ReloadIntervalHours int      `yaml:"reload_interval_hours"`
 }
 
 type DashboardConfig struct {

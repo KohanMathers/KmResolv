@@ -66,12 +66,13 @@ records:
     value: 192.168.1.50
 
 filtering:
-  mode: "off"            # off | blacklist | whitelist
+  mode: "off"                  # off | blacklist | whitelist
   inline:
     - ads.example.com
   lists:
     - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
     - /etc/kmresolv/custom.list
+  reload_interval_hours: 24    # re-fetch lists every N hours; 0 = disabled
 
 dashboard:
   enabled: true

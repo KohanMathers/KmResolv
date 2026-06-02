@@ -112,6 +112,31 @@ func (f *Filter) InlineDomains() []string {
 	return out
 }
 
+func (f *Filter) Reload(cfg *config.Config) {
+	mode := strings.ToLower(cfg.Filtering.Mode)
+
+	loaded := make(map[string]bool)
+	if mode != "off" {
+		for _, source := range cfg.Filtering.Lists {
+			if err := loadListFromSource(source, loaded); err != nil {
+				logger.LogWarn("failed to reload filter list %s: %v", source, err)
+			}
+		}
+	}
+
+	f.wmu.Lock()
+	defer f.wmu.Unlock()
+	domains := make(map[string]bool, len(loaded)+len(f.inline))
+	for d := range loaded {
+		domains[d] = true
+	}
+	for d := range f.inline {
+		domains[d] = true
+	}
+	f.state.Store(&filterState{domains: domains, mode: mode})
+	logger.LogInfo("filter reloaded: mode=%s domains=%d", mode, len(domains))
+}
+
 func copyDomains(m map[string]bool) map[string]bool {
 	c := make(map[string]bool, len(m))
 	for k, v := range m {
