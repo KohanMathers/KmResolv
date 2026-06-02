@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -103,13 +106,29 @@ func forwarderAddr(server string) string {
 	return server + ":53"
 }
 
+func dotAddr(server string) string {
+	addr := strings.TrimPrefix(server, "tls://")
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return addr + ":853"
+	}
+	return addr
+}
+
 func (s *Server) resolveViaForwarder(name string, qtype uint16) (*dns.Message, error) {
 	timeout := time.Duration(s.cfg.Resolver.Timeout) * time.Second
 	for _, upstream := range s.cfg.Resolver.Forwarder.Servers {
-		server := forwarderAddr(upstream)
-		msg, err := s.queryForwarder(server, name, qtype, timeout)
+		var msg *dns.Message
+		var err error
+		switch {
+		case strings.HasPrefix(upstream, "https://"):
+			msg, err = s.queryDoH(upstream, name, qtype, timeout)
+		case strings.HasPrefix(upstream, "tls://"):
+			msg, err = s.queryDoT(dotAddr(upstream), name, qtype)
+		default:
+			msg, err = s.queryForwarder(forwarderAddr(upstream), name, qtype, timeout)
+		}
 		if err != nil {
-			logger.LogDebug("forwarder %s failed for %s: %v", server, name, err)
+			logger.LogDebug("forwarder %s failed for %s: %v", upstream, name, err)
 			if strings.Contains(err.Error(), "NXDOMAIN") {
 				return nil, err
 			}
@@ -310,13 +329,21 @@ func (s *Server) query(server, name string, qtype uint16) (*dns.Message, error) 
 }
 
 func (s *Server) queryTCP(server, name string, qtype uint16) (*dns.Message, error) {
+	return s.queryTCPPool(s.tcpPool, server, name, qtype)
+}
+
+func (s *Server) queryDoT(server, name string, qtype uint16) (*dns.Message, error) {
+	return s.queryTCPPool(s.dotPool, server, name, qtype)
+}
+
+func (s *Server) queryTCPPool(pool *connPool, server, name string, qtype uint16) (*dns.Message, error) {
 	timeout := time.Duration(s.cfg.Resolver.Timeout) * time.Second
-	conn, err := s.tcpPool.get(server, timeout)
+	conn, err := pool.get(server, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("tcp dial: %w", err)
 	}
 	failed := true
-	defer func() { s.tcpPool.put(server, conn, failed) }()
+	defer func() { pool.put(server, conn, failed) }()
 
 	req := s.buildQuery(name, qtype)
 	req.ID = conn.nextID
@@ -357,6 +384,54 @@ func (s *Server) queryTCP(server, name string, qtype uint16) (*dns.Message, erro
 		return nil, fmt.Errorf("rcode %d from %s (tcp)", resp.Rcode(), server)
 	}
 	failed = false
+	return resp, nil
+}
+
+func (s *Server) queryDoH(dohURL, name string, qtype uint16, timeout time.Duration) (*dns.Message, error) {
+	req := s.buildQuery(name, qtype)
+	req.SetRD(true)
+	req.ID = uint16(rand.Uint32())
+
+	packed, err := req.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("doh pack: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, dohURL, bytes.NewReader(packed))
+	if err != nil {
+		return nil, fmt.Errorf("doh request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/dns-message")
+	httpReq.Header.Set("Accept", "application/dns-message")
+
+	httpResp, err := s.dohClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("doh http: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("doh http status %d from %s", httpResp.StatusCode, dohURL)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, 65535))
+	if err != nil {
+		return nil, fmt.Errorf("doh read: %w", err)
+	}
+
+	resp, err := dns.ParseMessage(body)
+	if err != nil {
+		return nil, fmt.Errorf("doh parse: %w", err)
+	}
+	if resp.Rcode() == dns.RcodeNXDomain {
+		return nil, fmt.Errorf("NXDOMAIN: %s does not exist", name)
+	}
+	if resp.Rcode() != dns.RcodeNoError {
+		return nil, fmt.Errorf("rcode %d from doh %s", resp.Rcode(), dohURL)
+	}
 	return resp, nil
 }
 

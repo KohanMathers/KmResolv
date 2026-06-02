@@ -58,6 +58,14 @@ resolver:
     negative_ttl: 300
     prefetch: true
     min_ttl: 30
+  forwarder:
+    enabled: false
+    servers:
+      - 1.1.1.1                    # plain UDP
+      - tls://1.1.1.1              # DNS-over-TLS (port 853)
+      - https://1.1.1.1/dns-query  # DNS-over-HTTPS; use IP, not hostname,
+                                   # to avoid a circular DNS lookup
+    fallback_to_iterative: true
 
 records:
   - name: example.home

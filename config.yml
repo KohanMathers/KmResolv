@@ -44,14 +44,20 @@ resolver:
 ######################################################################
 # FORWARDER                                                          #
 # enabled:               Forward queries to configured upstreams     #
-# servers:               Upstream DNS IPs to query in order          #
+# servers:               Upstream resolvers, tried in order.         #
+#   Plain IP/host        UDP (port 53 default)                       #
+#   tls://host[:port]    DNS-over-TLS (port 853 default)             #
+#   https://host/path    DNS-over-HTTPS (RFC 8484)                   #
+#                        Use an IP for DoH to avoid a circular DNS   #
+#                        lookup when resolving the server hostname.  #
 # fallback_to_iterative: Iterative fallback if all forwarders fail   #
 ######################################################################
     forwarder:
         enabled: false
         servers:
             - 1.1.1.1
-            - 8.8.8.8
+            - tls://1.1.1.1
+            - https://1.1.1.1/dns-query
         fallback_to_iterative: true
 
 ######################################################################

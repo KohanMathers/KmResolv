@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"math/rand"
 	"net"
 	"sync"
@@ -24,6 +25,7 @@ type poolShard struct {
 type connPool struct {
 	network      string
 	maxPerServer int
+	dialFn       func(addr string, timeout time.Duration) (net.Conn, error)
 	shards       [poolNumShards]poolShard
 }
 
@@ -33,6 +35,34 @@ func newConnPool(network string, maxPerServer int) *connPool {
 		p.shards[i].conns = make(map[string][]*pooledConn)
 	}
 	return p
+}
+
+func newTLSConnPool(maxPerServer int) *connPool {
+	p := newConnPool("tcp", maxPerServer)
+	p.dialFn = dialTLS
+	return p
+}
+
+func dialTLS(addr string, timeout time.Duration) (net.Conn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	rawConn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(rawConn, &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	})
+	tlsConn.SetDeadline(time.Now().Add(timeout))
+	if err := tlsConn.Handshake(); err != nil {
+		rawConn.Close()
+		return nil, err
+	}
+	tlsConn.SetDeadline(time.Time{})
+	return tlsConn, nil
 }
 
 func poolShardIdx(server string) uint32 {
@@ -61,12 +91,18 @@ func (p *connPool) get(server string, timeout time.Duration) (*pooledConn, error
 	}
 	s.mu.Unlock()
 
-	conn, err := net.DialTimeout(p.network, server, timeout)
+	var raw net.Conn
+	var err error
+	if p.dialFn != nil {
+		raw, err = p.dialFn(server, timeout)
+	} else {
+		raw, err = net.DialTimeout(p.network, server, timeout)
+	}
 	if err != nil {
 		return nil, err
 	}
-	conn.SetDeadline(time.Now().Add(timeout))
-	return &pooledConn{Conn: conn, nextID: uint16(rand.Uint32())}, nil
+	raw.SetDeadline(time.Now().Add(timeout))
+	return &pooledConn{Conn: raw, nextID: uint16(rand.Uint32())}, nil
 }
 
 func (p *connPool) put(server string, pc *pooledConn, failed bool) {

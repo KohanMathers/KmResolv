@@ -1,8 +1,10 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"runtime"
 	"strings"
 	"sync"
@@ -18,16 +20,18 @@ import (
 )
 
 type Server struct {
-	cfg      *config.Config
-	cache    *cache.Cache
-	filter   *filter.Filter
-	records  *records.RecordStore
-	qlog     *QueryLog
-	pool     *connPool
-	tcpPool  *connPool
-	rawPool  sync.Pool
-	inflight sync.Map
-	sem      chan struct{}
+	cfg       *config.Config
+	cache     *cache.Cache
+	filter    *filter.Filter
+	records   *records.RecordStore
+	qlog      *QueryLog
+	pool      *connPool
+	tcpPool   *connPool
+	dotPool   *connPool
+	dohClient *http.Client
+	rawPool   sync.Pool
+	inflight  sync.Map
+	sem       chan struct{}
 
 	statTotalQueries   atomic.Uint64
 	statCacheHits      atomic.Uint64
@@ -41,13 +45,22 @@ type Server struct {
 
 func New(cfg *config.Config) *Server {
 	s := &Server{
-		cfg:       cfg,
-		filter:    filter.NewFilter(cfg),
-		records:   records.NewRecordStore(cfg),
-		qlog:      newQueryLog(500),
-		cache:     cache.NewCache(),
-		pool:      newConnPool("udp", poolSizePerServer),
-		tcpPool:   newConnPool("tcp", tcpPoolSizePerServer),
+		cfg:     cfg,
+		filter:  filter.NewFilter(cfg),
+		records: records.NewRecordStore(cfg),
+		qlog:    newQueryLog(500),
+		cache:   cache.NewCache(),
+		pool:    newConnPool("udp", poolSizePerServer),
+		tcpPool: newConnPool("tcp", tcpPoolSizePerServer),
+		dotPool: newTLSConnPool(tcpPoolSizePerServer),
+		dohClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+				TLSHandshakeTimeout: 5 * time.Second,
+				ForceAttemptHTTP2:   true,
+				MaxIdleConnsPerHost: 4,
+			},
+		},
 		startTime: time.Now(),
 	}
 	s.rawPool.New = func() any { return make([]byte, udpBufSize) }
