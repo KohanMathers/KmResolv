@@ -194,7 +194,8 @@ check_port_53() {
 
 write_service() {
     local binary="$1"
-    cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
+    local dest="${2:-/etc/systemd/system/${SERVICE_NAME}.service}"
+    cat > "$dest" <<EOF
 [Unit]
 Description=kmresolv DNS resolver and dashboard
 After=network-online.target
@@ -215,18 +216,117 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-    success "systemd service written to /etc/systemd/system/${SERVICE_NAME}.service"
+    if [[ "$dest" == "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+        success "systemd service written to $dest"
+    fi
 }
 
-main() {
-    require_root
+merge_config() {
+    local existing="$1"
+    local new_template="$2"
 
-    echo
-    echo -e "${BOLD}kmresolv installer${RESET}"
-    echo "  Repository : https://github.com/${REPO}"
-    echo "  Install dir: ${INSTALL_DIR}"
-    echo
+    if ! command -v python3 &>/dev/null; then
+        warn "python3 not found — cannot check for new config options."
+        warn "Compare ${existing} with the latest config.yml manually."
+        return
+    fi
 
+    if ! python3 -c "import yaml" 2>/dev/null; then
+        warn "PyYAML not available — cannot check for new config options."
+        warn "Install it with: pip3 install pyyaml"
+        return
+    fi
+
+    local added
+    added=$(python3 - "$existing" "$new_template" <<'PYEOF'
+import sys, yaml
+
+with open(sys.argv[1]) as f:
+    existing = yaml.safe_load(f) or {}
+with open(sys.argv[2]) as f:
+    template = yaml.safe_load(f) or {}
+
+missing = {k: v for k, v in template.items() if k not in existing}
+if not missing:
+    sys.exit(0)
+
+with open(sys.argv[1], 'a') as f:
+    f.write('\n# Options added by kmresolv update — review and adjust as needed\n')
+    yaml.dump(missing, f, default_flow_style=False, allow_unicode=True)
+
+print(' '.join(missing.keys()))
+PYEOF
+    )
+
+    if [[ -n "$added" ]]; then
+        success "Added new config option(s): ${added}"
+        warn "New options appended to ${existing} — review and adjust as needed."
+    else
+        success "Config is up to date — no new options to add."
+    fi
+}
+
+merge_service() {
+    local existing="$1"
+    local new_template="$2"
+    local output="$3"
+
+    if [[ ! -f "$existing" ]]; then
+        cp "$new_template" "$output"
+        return
+    fi
+
+    if ! command -v python3 &>/dev/null; then
+        cp "$new_template" "$output"
+        warn "python3 not found — service file replaced with new template; your customisations may be lost."
+        warn "Backup at ${existing}.bak if you need to recover them."
+        cp "$existing" "${existing}.bak" 2>/dev/null || true
+        return
+    fi
+
+    python3 - "$existing" "$new_template" "$output" <<'PYEOF'
+import sys, configparser
+
+def parse_unit(path):
+    cp = configparser.RawConfigParser()
+    cp.optionxform = str
+    with open(path) as f:
+        cp.read_file(f)
+    return cp
+
+existing_path, new_path, output_path = sys.argv[1], sys.argv[2], sys.argv[3]
+existing = parse_unit(existing_path)
+new      = parse_unit(new_path)
+
+merged = configparser.RawConfigParser()
+merged.optionxform = str
+
+for section in new.sections():
+    merged.add_section(section)
+    for key, val in new.items(section):
+        merged.set(section, key, val)
+
+for section in existing.sections():
+    if not merged.has_section(section):
+        merged.add_section(section)
+    for key, val in existing.items(section):
+        merged.set(section, key, val)
+
+lines = []
+for section in merged.sections():
+    lines.append(f'[{section}]')
+    for key, val in merged.items(section):
+        lines.append(f'{key}={val}')
+    lines.append('')
+
+with open(output_path, 'w') as f:
+    f.write('\n'.join(lines).rstrip() + '\n')
+PYEOF
+
+    success "Service file merged — your customisations preserved."
+}
+
+do_fresh_install() {
     INSTALL_JAVA=false
     if prompt_java; then
         INSTALL_JAVA=true
@@ -236,6 +336,7 @@ main() {
     arch=$(detect_arch)
 
     info "Fetching latest release asset URLs from GitHub..."
+    local binary_url jar_url config_url polar_url
     binary_url=$(fetch_latest_release_url "${BINARY_NAME}-linux-${arch}")
     jar_url=$(fetch_latest_release_url "${JAR_NAME}")
     config_url=$(fetch_latest_release_url "${CONFIG_NAME}")
@@ -299,6 +400,87 @@ main() {
     echo "    source ~/.bashrc   (bash)"
     echo "    source ~/.zshrc    (zsh)"
     echo
+}
+
+do_update() {
+    local current_version
+    current_version=$("${INSTALL_DIR}/${BINARY_NAME}" version 2>/dev/null || echo "unknown")
+
+    echo -e "  Current version : ${current_version}"
+    echo
+
+    local arch
+    arch=$(detect_arch)
+
+    info "Fetching latest release asset URLs from GitHub..."
+    local binary_url jar_url config_url polar_url
+    binary_url=$(fetch_latest_release_url "${BINARY_NAME}-linux-${arch}")
+    jar_url=$(fetch_latest_release_url "${JAR_NAME}")
+    config_url=$(fetch_latest_release_url "${CONFIG_NAME}")
+    polar_url=$(fetch_latest_release_url "${POLAR_NAME}")
+
+    local tmp
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+
+    download "$binary_url"  "${tmp}/${BINARY_NAME}"
+    download "$jar_url"     "${tmp}/${JAR_NAME}"
+    download "$config_url"  "${tmp}/${CONFIG_NAME}"
+    download "$polar_url"   "${tmp}/${POLAR_NAME}"
+
+    chmod +x "${tmp}/${BINARY_NAME}"
+
+    info "Checking configuration for new options..."
+    merge_config "${INSTALL_DIR}/${CONFIG_NAME}" "${tmp}/${CONFIG_NAME}"
+
+    info "Updating service file..."
+    write_service "${INSTALL_DIR}/${BINARY_NAME}" "${tmp}/${SERVICE_NAME}.service"
+    merge_service \
+        "/etc/systemd/system/${SERVICE_NAME}.service" \
+        "${tmp}/${SERVICE_NAME}.service" \
+        "/etc/systemd/system/${SERVICE_NAME}.service"
+
+    cp "${tmp}/${BINARY_NAME}"  "${INSTALL_DIR}/${BINARY_NAME}"
+    cp "${tmp}/${JAR_NAME}"     "${INSTALL_DIR}/${JAR_NAME}"
+    cp "${tmp}/${POLAR_NAME}"   "${INSTALL_DIR}/${POLAR_NAME}"
+
+    success "Updated files installed to ${INSTALL_DIR}"
+
+    info "Reloading systemd daemon..."
+    systemctl daemon-reload
+
+    info "Restarting ${SERVICE_NAME} service..."
+    systemctl restart "${SERVICE_NAME}"
+
+    local new_version
+    new_version=$("${INSTALL_DIR}/${BINARY_NAME}" version 2>/dev/null || echo "unknown")
+
+    echo
+    success "kmresolv updated and restarted."
+    echo "  ${current_version} → ${new_version}"
+    echo
+    echo -e "  ${BOLD}Useful commands:${RESET}"
+    echo "    systemctl status ${SERVICE_NAME}"
+    echo "    journalctl -u ${SERVICE_NAME} -f"
+    echo
+}
+
+main() {
+    require_root
+
+    echo
+    echo -e "${BOLD}kmresolv installer${RESET}"
+    echo "  Repository : https://github.com/${REPO}"
+    echo "  Install dir: ${INSTALL_DIR}"
+    echo
+
+    if [[ -f "${INSTALL_DIR}/${BINARY_NAME}" ]]; then
+        info "Detected existing installation — running update."
+        do_update
+    else
+        info "No existing installation detected — running fresh install."
+        do_fresh_install
+    fi
 }
 
 main "$@"
