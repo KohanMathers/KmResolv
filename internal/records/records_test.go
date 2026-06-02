@@ -214,6 +214,93 @@ func TestLookupMissing(t *testing.T) {
 	}
 }
 
+func TestWildcardLookup(t *testing.T) {
+	cfg := &config.Config{
+		Records: []config.RecordConfig{
+			{Name: "*.home", Type: "A", TTL: 60, Value: "192.168.1.1"},
+		},
+	}
+	rs := NewRecordStore(cfg)
+
+	rrs := rs.Lookup("pi.home", dns.TypeA)
+	if len(rrs) != 1 {
+		t.Fatalf("expected 1 A record for pi.home, got %d", len(rrs))
+	}
+	if rrs[0].Name != "pi.home" {
+		t.Errorf("wildcard match should rewrite Name to queried name, got %q", rrs[0].Name)
+	}
+}
+
+func TestWildcardDoesNotMatchParent(t *testing.T) {
+	cfg := &config.Config{
+		Records: []config.RecordConfig{
+			{Name: "*.home", Type: "A", TTL: 60, Value: "192.168.1.1"},
+		},
+	}
+	rs := NewRecordStore(cfg)
+
+	if rs.Lookup("home", dns.TypeA) != nil {
+		t.Error("wildcard should not match the parent zone itself")
+	}
+}
+
+func TestWildcardDoesNotMatchDeeper(t *testing.T) {
+	cfg := &config.Config{
+		Records: []config.RecordConfig{
+			{Name: "*.home", Type: "A", TTL: 60, Value: "192.168.1.1"},
+		},
+	}
+	rs := NewRecordStore(cfg)
+
+	if rs.Lookup("sub.pi.home", dns.TypeA) != nil {
+		t.Error("*.home should not match two levels deep (sub.pi.home)")
+	}
+}
+
+func TestWildcardExactTakesPrecedence(t *testing.T) {
+	cfg := &config.Config{
+		Records: []config.RecordConfig{
+			{Name: "*.home", Type: "A", TTL: 60, Value: "192.168.1.1"},
+			{Name: "nas.home", Type: "A", TTL: 60, Value: "192.168.1.50"},
+		},
+	}
+	rs := NewRecordStore(cfg)
+
+	rrs := rs.Lookup("nas.home", dns.TypeA)
+	if len(rrs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(rrs))
+	}
+	if rrs[0].Data[3] != 50 {
+		t.Errorf("exact record should take precedence over wildcard, got last octet %d", rrs[0].Data[3])
+	}
+}
+
+func TestWildcardTypeMismatch(t *testing.T) {
+	cfg := &config.Config{
+		Records: []config.RecordConfig{
+			{Name: "*.home", Type: "A", TTL: 60, Value: "192.168.1.1"},
+		},
+	}
+	rs := NewRecordStore(cfg)
+
+	if rs.Lookup("pi.home", dns.TypeAAAA) != nil {
+		t.Error("wildcard A record should not match AAAA query")
+	}
+}
+
+func TestWildcardCaseInsensitive(t *testing.T) {
+	cfg := &config.Config{
+		Records: []config.RecordConfig{
+			{Name: "*.home", Type: "A", TTL: 60, Value: "192.168.1.1"},
+		},
+	}
+	rs := NewRecordStore(cfg)
+
+	if rs.Lookup("PI.HOME", dns.TypeA) == nil {
+		t.Error("wildcard lookup should be case-insensitive")
+	}
+}
+
 func TestNewRecordStoreSkipsInvalid(t *testing.T) {
 	cfg := &config.Config{
 		Records: []config.RecordConfig{

@@ -169,6 +169,9 @@ func (c *Config) validate() error {
 		if r.Name == "" || r.Value == "" {
 			return fmt.Errorf("custom record missing name or value")
 		}
+		if strings.Contains(r.Name, "*") && !strings.HasPrefix(r.Name, "*.") {
+			return fmt.Errorf("custom record %q: wildcard must be the leftmost label (e.g. *.home)", r.Name)
+		}
 		if r.Type != "A" && r.Type != "AAAA" && r.Type != "CNAME" && r.Type != "TXT" && r.Type != "MX" {
 			return fmt.Errorf("custom record type %q not supported", r.Type)
 		}

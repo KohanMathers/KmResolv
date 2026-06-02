@@ -34,17 +34,32 @@ func NewRecordStore(cfg *config.Config) *RecordStore {
 
 func (rs *RecordStore) Lookup(name string, qtype uint16) []dns.RR {
 	key := strings.ToLower(strings.TrimSuffix(name, "."))
-	rrs, ok := rs.records[key]
-	if !ok {
-		return nil
+
+	if rrs, ok := rs.records[key]; ok {
+		return filterByType(rrs, qtype)
 	}
-	var matches []dns.RR
-	for _, rr := range rrs {
-		if rr.Type == qtype {
-			matches = append(matches, rr)
+
+	if idx := strings.Index(key, "."); idx != -1 {
+		if rrs, ok := rs.records["*."+key[idx+1:]]; ok {
+			matches := filterByType(rrs, qtype)
+			for i := range matches {
+				matches[i].Name = key
+			}
+			return matches
 		}
 	}
-	return matches
+
+	return nil
+}
+
+func filterByType(rrs []dns.RR, qtype uint16) []dns.RR {
+	var out []dns.RR
+	for _, rr := range rrs {
+		if rr.Type == qtype {
+			out = append(out, rr)
+		}
+	}
+	return out
 }
 
 func buildRR(r config.RecordConfig) (dns.RR, error) {
