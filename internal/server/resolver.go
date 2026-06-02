@@ -138,12 +138,14 @@ func (s *Server) queryForwarder(server, name string, qtype uint16, timeout time.
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
-	buf := make([]byte, udpBufSize)
+	buf := s.rawPool.Get().([]byte)
 	n, err := conn.Read(buf)
 	if err != nil {
+		s.rawPool.Put(buf)
 		return nil, fmt.Errorf("read: %w", err)
 	}
 	resp, err := dns.ParseMessage(buf[:n])
+	s.rawPool.Put(buf)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
@@ -271,13 +273,14 @@ func (s *Server) query(server, name string, qtype uint16) (*dns.Message, error) 
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
-	buf := make([]byte, udpBufSize)
+	buf := s.rawPool.Get().([]byte)
 	n, err := conn.Read(buf)
 	if err != nil {
+		s.rawPool.Put(buf)
 		return nil, fmt.Errorf("read: %w", err)
 	}
-
 	resp, err := dns.ParseMessage(buf[:n])
+	s.rawPool.Put(buf)
 	if err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}

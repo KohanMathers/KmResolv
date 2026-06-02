@@ -106,15 +106,15 @@ func ParseMessage(buf []byte) (*Message, error) {
 	}
 
 	var err error
-	m.Answers, offset, err = parseRRs(buf, offset, int(m.ANCount))
+	m.Answers, offset, err = parseRRs(m.Raw, offset, int(m.ANCount))
 	if err != nil {
 		return nil, err
 	}
-	m.Authority, offset, err = parseRRs(buf, offset, int(m.NSCount))
+	m.Authority, offset, err = parseRRs(m.Raw, offset, int(m.NSCount))
 	if err != nil {
 		return nil, err
 	}
-	m.Additional, _, err = parseRRs(buf, offset, int(m.ARCount))
+	m.Additional, _, err = parseRRs(m.Raw, offset, int(m.ARCount))
 	return m, err
 }
 
