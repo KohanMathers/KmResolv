@@ -130,6 +130,8 @@ func (s *Server) queryForwarder(server, name string, qtype uint16, timeout time.
 
 	req := s.buildQuery(name, qtype)
 	req.SetRD(true)
+	req.ID = conn.nextID
+	conn.nextID++
 	packed, err := req.Pack()
 	if err != nil {
 		return nil, fmt.Errorf("pack: %w", err)
@@ -265,6 +267,8 @@ func (s *Server) query(server, name string, qtype uint16) (*dns.Message, error) 
 	defer func() { s.pool.put(server, conn, failed) }()
 
 	req := s.buildQuery(name, qtype)
+	req.ID = conn.nextID
+	conn.nextID++
 	packed, err := req.Pack()
 	if err != nil {
 		return nil, fmt.Errorf("pack: %w", err)

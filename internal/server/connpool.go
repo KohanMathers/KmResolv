@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -9,9 +10,17 @@ import (
 const poolSizePerServer = 16
 const poolNumShards = 16
 
+// pooledConn wraps a UDP connection with a per-connection sequential ID
+// counter. Because the pool never returns the same connection to two callers
+// concurrently, nextID requires no synchronisation.
+type pooledConn struct {
+	net.Conn
+	nextID uint16
+}
+
 type poolShard struct {
 	mu    sync.Mutex
-	conns map[string][]net.Conn
+	conns map[string][]*pooledConn
 }
 
 type udpPool struct {
@@ -21,7 +30,7 @@ type udpPool struct {
 func newUDPPool() *udpPool {
 	p := &udpPool{}
 	for i := range p.shards {
-		p.shards[i].conns = make(map[string][]net.Conn)
+		p.shards[i].conns = make(map[string][]*pooledConn)
 	}
 	return p
 }
@@ -39,16 +48,16 @@ func (p *udpPool) shard(server string) *poolShard {
 	return &p.shards[poolShardIdx(server)]
 }
 
-func (p *udpPool) get(server string, timeout time.Duration) (net.Conn, error) {
+func (p *udpPool) get(server string, timeout time.Duration) (*pooledConn, error) {
 	s := p.shard(server)
 	s.mu.Lock()
 	list := s.conns[server]
 	if len(list) > 0 {
-		conn := list[len(list)-1]
+		pc := list[len(list)-1]
 		s.conns[server] = list[:len(list)-1]
 		s.mu.Unlock()
-		conn.SetDeadline(time.Now().Add(timeout))
-		return conn, nil
+		pc.SetDeadline(time.Now().Add(timeout))
+		return pc, nil
 	}
 	s.mu.Unlock()
 
@@ -57,22 +66,22 @@ func (p *udpPool) get(server string, timeout time.Duration) (net.Conn, error) {
 		return nil, err
 	}
 	conn.SetDeadline(time.Now().Add(timeout))
-	return conn, nil
+	return &pooledConn{Conn: conn, nextID: uint16(rand.Uint32())}, nil
 }
 
-func (p *udpPool) put(server string, conn net.Conn, failed bool) {
+func (p *udpPool) put(server string, pc *pooledConn, failed bool) {
 	if failed {
-		conn.Close()
+		pc.Close()
 		return
 	}
-	conn.SetDeadline(time.Time{})
+	pc.SetDeadline(time.Time{})
 	s := p.shard(server)
 	s.mu.Lock()
 	if len(s.conns[server]) < poolSizePerServer {
-		s.conns[server] = append(s.conns[server], conn)
+		s.conns[server] = append(s.conns[server], pc)
 		s.mu.Unlock()
 		return
 	}
 	s.mu.Unlock()
-	conn.Close()
+	pc.Close()
 }
