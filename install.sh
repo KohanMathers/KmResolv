@@ -433,6 +433,9 @@ do_update() {
     info "Checking configuration for new options..."
     merge_config "${INSTALL_DIR}/${CONFIG_NAME}" "${tmp}/${CONFIG_NAME}"
 
+    info "Stopping ${SERVICE_NAME} service..."
+    systemctl stop "${SERVICE_NAME}"
+
     info "Updating service file..."
     write_service "${INSTALL_DIR}/${BINARY_NAME}" "${tmp}/${SERVICE_NAME}.service"
     merge_service \
