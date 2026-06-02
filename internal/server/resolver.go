@@ -255,12 +255,12 @@ func (s *Server) query(server, name string, qtype uint16) (*dns.Message, error) 
 	if ms := s.cfg.Resolver.AttemptTimeoutMs; ms > 0 {
 		timeout = min(time.Duration(ms)*time.Millisecond, fullTimeout)
 	}
-	conn, err := net.DialTimeout("udp", server, timeout)
+	conn, err := s.pool.get(server, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout))
+	failed := true
+	defer func() { s.pool.put(server, conn, failed) }()
 
 	req := s.buildQuery(name, qtype)
 	packed, err := req.Pack()
@@ -285,16 +285,20 @@ func (s *Server) query(server, name string, qtype uint16) (*dns.Message, error) 
 		return nil, fmt.Errorf("response ID mismatch: got %d want %d", resp.ID, req.ID)
 	}
 	if resp.Rcode() == dns.RcodeNXDomain {
+		failed = false
 		return nil, fmt.Errorf("NXDOMAIN: %s does not exist", name)
 	}
 	if resp.Rcode() != dns.RcodeNoError {
+		failed = false
 		return nil, fmt.Errorf("rcode %d from %s", resp.Rcode(), server)
 	}
 	if resp.Flags&0x0200 != 0 && s.cfg.Resolver.TCPFallback {
 		logger.LogDebug("response truncated, retrying over TCP: %s", server)
+		failed = false
 		return s.queryTCP(server, name, qtype)
 	}
 
+	failed = false
 	return resp, nil
 }
 
