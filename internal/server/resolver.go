@@ -399,19 +399,27 @@ func (s *Server) resolveNSParallel(nsNames []string, depth int) ([]string, error
 	for _, ns := range nsNames {
 		ns := ns
 		go func() {
-			var ips []string
-			if r, err := s.resolveNSAddr(ns, dns.TypeA, depth); err != nil {
-				logger.LogDebug("parallel NS resolve A failed for %s: %v", ns, err)
-			} else {
-				for _, rr := range r.Answers {
-					if rr.Type == dns.TypeA {
-						if ip, err := dns.ParseA(rr.Data); err == nil {
-							ips = append(ips, ip)
+			aCh := make(chan []string, 1)
+			aaaaCh := make(chan []string, 1)
+
+			go func() {
+				var ips []string
+				if r, err := s.resolveNSAddr(ns, dns.TypeA, depth); err != nil {
+					logger.LogDebug("parallel NS resolve A failed for %s: %v", ns, err)
+				} else {
+					for _, rr := range r.Answers {
+						if rr.Type == dns.TypeA {
+							if ip, err := dns.ParseA(rr.Data); err == nil {
+								ips = append(ips, ip)
+							}
 						}
 					}
 				}
-			}
-			if len(ips) == 0 {
+				aCh <- ips
+			}()
+
+			go func() {
+				var ips []string
 				if r, err := s.resolveNSAddr(ns, dns.TypeAAAA, depth); err != nil {
 					logger.LogDebug("parallel NS resolve AAAA failed for %s: %v", ns, err)
 				} else {
@@ -421,7 +429,21 @@ func (s *Server) resolveNSParallel(nsNames []string, depth int) ([]string, error
 						}
 					}
 				}
+				aaaaCh <- ips
+			}()
+
+			var ips []string
+			select {
+			case ips = <-aCh:
+				if len(ips) == 0 {
+					ips = <-aaaaCh
+				}
+			case ips = <-aaaaCh:
+				if len(ips) == 0 {
+					ips = <-aCh
+				}
 			}
+
 			if len(ips) == 0 {
 				results <- result{err: fmt.Errorf("no IPs found for NS %s", ns)}
 				return
