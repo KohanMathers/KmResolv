@@ -181,6 +181,17 @@ setup_path() {
     fi
 }
 
+check_port_53() {
+    local occupied
+    occupied=$(ss -tulpn 2>/dev/null | grep -E '\s:53\s' || true)
+    if [[ -n "$occupied" ]]; then
+        local proc
+        proc=$(echo "$occupied" | grep -oP '"[^"]+"' | head -1 | tr -d '"')
+        [[ -z "$proc" ]] && proc="another process"
+        error "Port 53 is already in use by ${proc}.\n  Stop it before starting kmresolv. If using systemd-resolved:\n    sudo systemctl disable --now systemd-resolved\n    echo 'nameserver 127.0.0.1' | sudo tee /etc/resolv.conf"
+    fi
+}
+
 write_service() {
     local binary="$1"
     cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
@@ -270,6 +281,8 @@ main() {
 
     info "Enabling ${SERVICE_NAME} service..."
     systemctl enable "${SERVICE_NAME}"
+
+    check_port_53
 
     info "Starting ${SERVICE_NAME} service..."
     systemctl start "${SERVICE_NAME}"
