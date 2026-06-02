@@ -27,7 +27,7 @@ func cmdServe(args []string) {
 	logger.LogInfo("starting kmresolv on %s", cfg.Addr())
 
 	srv := server.New(cfg)
-	dashboard.Start(cfg, srv)
+	dashboard.Start(cfg, srv, Version)
 
 	if cfg.Minecraft.Enabled {
 		logger.LogInfo("starting minecraft server on %s:%d", cfg.Minecraft.Listen, cfg.Minecraft.Port)

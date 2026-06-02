@@ -15,6 +15,7 @@ import (
 	"github.com/kohanmathers/kmresolv/internal/config"
 	"github.com/kohanmathers/kmresolv/internal/logger"
 	"github.com/kohanmathers/kmresolv/internal/server"
+	"github.com/kohanmathers/kmresolv/internal/updater"
 )
 
 //go:embed dashboard.html
@@ -114,7 +115,7 @@ func requireAuth(w http.ResponseWriter, r *http.Request, cfg *config.Config) boo
 	return false
 }
 
-func Start(cfg *config.Config, srv *server.Server) {
+func Start(cfg *config.Config, srv *server.Server, version string) {
 	if !cfg.Dashboard.Enabled {
 		return
 	}
@@ -387,10 +388,20 @@ func Start(cfg *config.Config, srv *server.Server) {
 		if !requireAuth(w, r, cfg) {
 			return
 		}
+		if !cfg.Updater.CheckEnabled {
+			jsonOK(w, map[string]any{"available": false, "version": "", "url": ""})
+			return
+		}
+		result, err := updater.Check(version)
+		if err != nil {
+			logger.LogDebug("update check failed: %v", err)
+			jsonOK(w, map[string]any{"available": false, "version": "", "url": ""})
+			return
+		}
 		jsonOK(w, map[string]any{
-			"available": false,
-			"version":   "",
-			"url":       "",
+			"available": result.Available,
+			"version":   result.Version,
+			"url":       result.URL,
 		})
 	})
 

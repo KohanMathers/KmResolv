@@ -63,7 +63,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm || '' }}
           CGO_ENABLED: "0"
-        run: go build -trimpath -o "kmresolv-${{ matrix.suffix }}" ./cmd/kmresolv
+        run: go build -trimpath -ldflags "-X main.Version=${{ needs.check-version.outputs.version }}" -o "kmresolv-${{ matrix.suffix }}" ./cmd/kmresolv
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

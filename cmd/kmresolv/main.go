@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+var Version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -25,7 +27,7 @@ func main() {
 	case "log":
 		cmdLog(os.Args[2:])
 	case "version":
-		fmt.Println("kmresolv v0.1.0")
+		fmt.Println("kmresolv v" + Version)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
