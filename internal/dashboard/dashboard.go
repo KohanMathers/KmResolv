@@ -236,6 +236,13 @@ func Start(cfg *config.Config, srv *server.Server, version string) {
 		})
 	})
 
+	mux.HandleFunc("/api/stats/history", func(w http.ResponseWriter, r *http.Request) {
+		if !requireAuth(w, r, cfg) {
+			return
+		}
+		jsonOK(w, srv.History())
+	})
+
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		st := srv.Stats()
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

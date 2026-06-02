@@ -30,6 +30,7 @@ type Server struct {
 	dotPool   *connPool
 	dohClient *http.Client
 	limiter   *rateLimiter
+	history   *statsHistory
 	rawPool   sync.Pool
 	inflight  sync.Map
 	sem       chan struct{}
@@ -62,6 +63,7 @@ func New(cfg *config.Config) *Server {
 				MaxIdleConnsPerHost: 4,
 			},
 		},
+		history:   &statsHistory{},
 		startTime: time.Now(),
 	}
 	s.rawPool.New = func() any { return make([]byte, udpBufSize) }
@@ -105,7 +107,33 @@ func (s *Server) filterReloadLoop() {
 	}
 }
 
+func (s *Server) History() []HistoryBucket {
+	return s.history.snapshot()
+}
+
+func (s *Server) sampleHistory() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	prev := [3]uint64{
+		s.statTotalQueries.Load(),
+		s.statCacheHits.Load(),
+		s.statBlocked.Load(),
+	}
+	for range ticker.C {
+		q := s.statTotalQueries.Load()
+		h := s.statCacheHits.Load()
+		b := s.statBlocked.Load()
+		s.history.record(HistoryBucket{
+			Queries: q - prev[0],
+			Hits:    h - prev[1],
+			Blocked: b - prev[2],
+		})
+		prev = [3]uint64{q, h, b}
+	}
+}
+
 func (s *Server) Start() error {
+	go s.sampleHistory()
 	if s.cfg.Filtering.ReloadIntervalHours > 0 {
 		go s.filterReloadLoop()
 	}
