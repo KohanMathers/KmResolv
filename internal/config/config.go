@@ -72,10 +72,12 @@ type FilterConfig struct {
 }
 
 type DashboardConfig struct {
-	Enabled bool       `yaml:"enabled"`
-	Listen  string     `yaml:"listen"`
-	Port    int        `yaml:"port"`
-	Auth    AuthConfig `yaml:"auth"`
+	Enabled     bool       `yaml:"enabled"`
+	Listen      string     `yaml:"listen"`
+	Port        int        `yaml:"port"`
+	Auth        AuthConfig `yaml:"auth"`
+	TLSCertFile string     `yaml:"tls_cert_file"`
+	TLSKeyFile  string     `yaml:"tls_key_file"`
 }
 
 type AuthConfig struct {
@@ -185,6 +187,9 @@ func (c *Config) validate() error {
 	}
 	if c.Resolver.RateLimit.Enabled && c.Resolver.RateLimit.Burst == 0 {
 		return fmt.Errorf("resolver.rate_limit.burst must be > 0 when rate limiting is enabled")
+	}
+	if (c.Dashboard.TLSCertFile == "") != (c.Dashboard.TLSKeyFile == "") {
+		return fmt.Errorf("dashboard: tls_cert_file and tls_key_file must both be set or both be empty")
 	}
 	mode := strings.ToLower(c.Filtering.Mode)
 	if mode != "blacklist" && mode != "whitelist" && mode != "off" {

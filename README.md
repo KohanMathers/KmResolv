@@ -95,6 +95,8 @@ dashboard:
   auth:                   # Leave empty to disable auth
     username: "admin"
     password: "changeme"
+  tls_cert_file: ""       # Path to PEM cert — enables HTTPS when both are set
+  tls_key_file: ""        # Path to PEM key
 
 updater:
   check_enabled: true

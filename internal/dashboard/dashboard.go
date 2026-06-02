@@ -490,12 +490,21 @@ func Start(cfg *config.Config, srv *server.Server, version string) {
 	})
 
 	addr := cfg.DashboardAddr()
-	logger.LogInfo("dashboard listening on http://%s", addr)
-	go func() {
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			logger.LogError("dashboard: %v", err)
-		}
-	}()
+	if cfg.Dashboard.TLSCertFile != "" {
+		logger.LogInfo("dashboard listening on https://%s", addr)
+		go func() {
+			if err := http.ListenAndServeTLS(addr, cfg.Dashboard.TLSCertFile, cfg.Dashboard.TLSKeyFile, mux); err != nil {
+				logger.LogError("dashboard: %v", err)
+			}
+		}()
+	} else {
+		logger.LogInfo("dashboard listening on http://%s", addr)
+		go func() {
+			if err := http.ListenAndServe(addr, mux); err != nil {
+				logger.LogError("dashboard: %v", err)
+			}
+		}()
+	}
 }
 
 func jsonOK(w http.ResponseWriter, v any) {

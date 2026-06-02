@@ -115,11 +115,15 @@ filtering:
 # DASHBOARD                                                          #
 # Web interface for monitoring and managing kmresolv.                #
 #                                                                    #
-# enabled:  Toggle the web dashboard on or off                       #
-# listen:   IP address for the dashboard to bind to                  #
-# port:     HTTP port for the dashboard                              #
-# username: Basic auth username (leave empty to disable auth)        #
-# password: Basic auth password                                      #
+# enabled:       Toggle the web dashboard on or off                  #
+# listen:        IP address for the dashboard to bind to             #
+# port:          HTTP/HTTPS port for the dashboard                   #
+# username:      Basic auth username (leave empty to disable auth)   #
+# password:      Basic auth password                                 #
+# tls_cert_file: Path to PEM certificate for HTTPS. Both cert and    #
+# tls_key_file:  key must be set (or both empty) to toggle TLS.      #
+#                Strongly recommended when listen is 0.0.0.0 and     #
+#                auth is enabled.                                    #
 ######################################################################
 dashboard:
     enabled: true
@@ -128,6 +132,8 @@ dashboard:
     auth:
         username: "admin"
         password: "changeme"
+    tls_cert_file: ""
+    tls_key_file: ""
 
 ######################################################################
 # UPDATER                                                            #
