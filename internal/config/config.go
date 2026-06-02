@@ -20,9 +20,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Listen   string `yaml:"listen"`
-	Port     int    `yaml:"port"`
-	LogLevel string `yaml:"log_level"`
+	Listen       string `yaml:"listen"`
+	Port         int    `yaml:"port"`
+	LogLevel     string `yaml:"log_level"`
+	QueryLogFile string `yaml:"query_log_file"`
 }
 
 type ResolverConfig struct {

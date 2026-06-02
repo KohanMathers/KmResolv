@@ -47,6 +47,7 @@ server:
   listen: 0.0.0.0
   port: 53
   log_level: info        # debug | info | warn | error
+  query_log_file: ""     # path to append JSON-lines query log; empty = disabled
 
 resolver:
   timeout: 3

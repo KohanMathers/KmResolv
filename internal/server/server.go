@@ -49,7 +49,7 @@ func New(cfg *config.Config) *Server {
 		cfg:     cfg,
 		filter:  filter.NewFilter(cfg),
 		records: records.NewRecordStore(cfg),
-		qlog:    newQueryLog(500),
+		qlog:    newQueryLog(500, cfg.Server.QueryLogFile),
 		cache:   cache.NewCache(),
 		pool:    newConnPool("udp", poolSizePerServer),
 		tcpPool: newConnPool("tcp", tcpPoolSizePerServer),

@@ -1,13 +1,17 @@
 ######################################################################
 # SERVER                                                             #
-# listen:    IP to bind to. Use 0.0.0.0 to listen on all interfaces  #
-# port:      UDP port for DNS queries. Standard port is 53           #
-# log_level: Log verbosity - debug, info, warn, or error             #
+# listen:          IP to bind to. Use 0.0.0.0 for all interfaces     #
+# port:            UDP port for DNS queries. Standard port is 53     #
+# log_level:       Log verbosity - debug, info, warn, or error       #
+# query_log_file:  Append every query as a JSON line to this file.   #
+#                  Leave empty to disable. Rotate with logrotate's   #
+#                  copytruncate or send SIGUSR1 to reopen.           #
 ######################################################################
 server:
     listen: 0.0.0.0
     port: 53
     log_level: info
+    query_log_file: ""
 
 ######################################################################
 # RESOLVER                                                           #
