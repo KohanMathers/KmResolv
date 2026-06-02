@@ -14,6 +14,7 @@ import (
 	"github.com/kohanmathers/kmresolv/internal/cache"
 	"github.com/kohanmathers/kmresolv/internal/config"
 	"github.com/kohanmathers/kmresolv/internal/dns"
+	"github.com/kohanmathers/kmresolv/internal/dnssec"
 	"github.com/kohanmathers/kmresolv/internal/filter"
 	"github.com/kohanmathers/kmresolv/internal/logger"
 	"github.com/kohanmathers/kmresolv/internal/records"
@@ -31,6 +32,7 @@ type Server struct {
 	dohClient *http.Client
 	limiter   *rateLimiter
 	history   *statsHistory
+	dnssecVal *dnssec.Validator
 	rawPool   sync.Pool
 	inflight  sync.Map
 	sem       chan struct{}
@@ -65,6 +67,9 @@ func New(cfg *config.Config) *Server {
 		},
 		history:   &statsHistory{},
 		startTime: time.Now(),
+	}
+	if cfg.Resolver.DNSSEC {
+		s.dnssecVal = dnssec.NewValidator()
 	}
 	s.rawPool.New = func() any { return make([]byte, udpBufSize) }
 	if cfg.Minecraft.Enabled {

@@ -13,18 +13,22 @@ server:
     log_level: info
     query_log_file: ""
 
-######################################################################
-# RESOLVER                                                           #
-# timeout:             Seconds before an upstream query is abandoned #
-# attempt_timeout_ms:  Per-nameserver deadline (ms) during iterative #
-#                      resolution; moves to the next candidate after #
-#                      this many ms. 0 = use full timeout each hop.  #
-# max_depth:           Max DNS referral hops before a query fails    #
-# max_concurrent:      Simultaneous upstream lookups, 0 = unlimited  #
+#######################################################################
+# RESOLVER                                                            #
+# timeout:             Seconds before an upstream query is abandoned  #
+# attempt_timeout_ms:  Per-nameserver deadline (ms) during iterative  #
+#                      resolution; moves to the next candidate after  #
+#                      this many ms. 0 = use full timeout each hop.   #
+# max_depth:           Max DNS referral hops before a query fails     #
+# max_concurrent:      Simultaneous upstream lookups, 0 = unlimited   #
 # edns0:               Advertise EDNS0 for larger UDP payload support #
 # tcp_fallback:        Retry over TCP if a UDP response is truncated  #
-# rate_limit:          Per-source-IP token bucket for client queries #
-######################################################################
+# dnssec:              Full DNSSEC chain validation from the root KSK #
+#                      Bogus responses return SERVFAIL; secure ones   #
+#                      carry the AD bit. Only applies to iterative    #
+#                      mode (not forwarder mode).                     #
+# rate_limit:          Per-source-IP token bucket for client queries  #
+#######################################################################
 resolver:
     timeout: 3
     attempt_timeout_ms: 800
@@ -32,6 +36,7 @@ resolver:
     max_concurrent: 200
     edns0: true
     tcp_fallback: true
+    dnssec: false
 
 ######################################################################
 # RATE LIMIT                                                         #

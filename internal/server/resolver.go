@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kohanmathers/kmresolv/internal/dns"
+	"github.com/kohanmathers/kmresolv/internal/dnssec"
 	"github.com/kohanmathers/kmresolv/internal/logger"
 )
 
@@ -83,6 +84,16 @@ func (s *Server) resolve(name string, qtype uint16) (*dns.Message, bool, error) 
 			logger.LogDebug("forwarder failed, falling back to iterative: %s (%v)", name, err)
 			msg, err = s.resolveAt(name, qtype, RootServers, 0)
 		}
+	} else if s.cfg.Resolver.DNSSEC && s.dnssecVal != nil {
+		var status dnssec.ValidationStatus
+		rootCtx := secCtx{zone: ".", keys: s.dnssecVal.LookupZoneKeys(".")}
+		msg, status, err = s.resolveAtDNSSEC(name, qtype, RootServers, 0, rootCtx)
+		if status == dnssec.StatusBogus && err == nil {
+			err = fmt.Errorf("DNSSEC validation failed for %s", name)
+		}
+		if err == nil && status == dnssec.StatusSecure && msg != nil {
+			msg.SetAD(true)
+		}
 	} else {
 		msg, err = s.resolveAt(name, qtype, RootServers, 0)
 	}
@@ -97,6 +108,185 @@ func (s *Server) resolve(name string, qtype uint16) (*dns.Message, bool, error) 
 	s.cache.Set(name, qtype, msg)
 	call.msg = msg
 	return msg, false, nil
+}
+
+type secCtx struct {
+	zone string
+	keys map[uint16]dnssec.DNSKEY
+}
+
+func (s *Server) resolveAtDNSSEC(
+	name string,
+	qtype uint16,
+	servers []string,
+	depth int,
+	ctx secCtx,
+) (*dns.Message, dnssec.ValidationStatus, error) {
+	if depth > s.cfg.Resolver.MaxDepth {
+		return nil, dnssec.StatusBogus, fmt.Errorf("max referral depth exceeded resolving %s", name)
+	}
+
+	shuffled := make([]string, len(servers))
+	copy(shuffled, servers)
+	rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+
+	var lastErr error
+	for _, sv := range shuffled {
+		server := sv + ":53"
+		resp, err := s.query(server, name, qtype)
+		if err != nil {
+			logger.LogDebug("sec: server %s failed for %s: %v", server, name, err)
+			lastErr = err
+			continue
+		}
+
+		if len(resp.Answers) > 0 {
+			if qtype != dns.TypeCNAME {
+				for _, rr := range resp.Answers {
+					if rr.Type == dns.TypeCNAME {
+						target, err := parseCNAME(resp, rr)
+						if err != nil {
+							return nil, dnssec.StatusBogus, fmt.Errorf("cname parse: %w", err)
+						}
+						if len(ctx.keys) > 0 {
+							cnameRRs := secFilterType(resp.Answers, dns.TypeCNAME)
+							rrsigs := secFilterType(resp.Answers, dns.TypeRRSIG)
+							if verr := dnssec.VerifyAnyRRSIG(ctx.keys, cnameRRs, rrsigs, dns.TypeCNAME, resp.Raw); verr != nil {
+								return nil, dnssec.StatusBogus, fmt.Errorf("CNAME RRSIG for %s: %w", name, verr)
+							}
+						}
+						logger.LogDebug("sec: CNAME %s → %s", name, target)
+						if s.cache.IsNegative(target, qtype) {
+							return nil, dnssec.StatusInsecure, fmt.Errorf("NXDOMAIN: %s does not exist", target)
+						}
+						if cached := s.cache.Get(target, qtype, s.cfg); cached != nil {
+							return cached, dnssec.StatusSecure, nil
+						}
+						return s.resolveAtDNSSEC(target, qtype, RootServers, depth+1,
+							secCtx{zone: ".", keys: s.dnssecVal.LookupZoneKeys(".")})
+					}
+				}
+			}
+
+			status := dnssec.StatusInsecure
+			if len(ctx.keys) > 0 {
+				ansRRs := secFilterType(resp.Answers, qtype)
+				rrsigs := secFilterType(resp.Answers, dns.TypeRRSIG)
+				if len(ansRRs) > 0 {
+					if verr := dnssec.VerifyAnyRRSIG(ctx.keys, ansRRs, rrsigs, qtype, resp.Raw); verr != nil {
+						return nil, dnssec.StatusBogus, fmt.Errorf("RRSIG for %s type %d: %w", name, qtype, verr)
+					}
+					status = dnssec.StatusSecure
+				}
+			}
+			return resp, status, nil
+		}
+
+		nsNames := extractNS(resp)
+		if len(nsNames) == 0 {
+			return resp, dnssec.StatusInsecure, nil
+		}
+
+		childZone := secDelegatedZone(resp)
+		logger.LogDebug("sec: referral → zone=%s servers=%v (depth %d)", childZone, nsNames, depth)
+
+		childDSRRs := secFilterTypeOwner(resp.Authority, dns.TypeDS, childZone)
+		if len(ctx.keys) > 0 && len(childDSRRs) > 0 {
+			rrsigs := secFilterType(resp.Authority, dns.TypeRRSIG)
+			if verr := dnssec.VerifyAnyRRSIG(ctx.keys, childDSRRs, rrsigs, dns.TypeDS, resp.Raw); verr != nil {
+				return nil, dnssec.StatusBogus, fmt.Errorf("DS RRSIG for %s: %w", childZone, verr)
+			}
+		}
+
+		glue := extractGlue(resp, nsNames)
+		var childServers []string
+		if len(glue) > 0 {
+			childServers = glue
+		} else {
+			childServers, err = s.resolveNSParallel(nsNames, depth)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+		}
+
+		childCtx := secCtx{zone: childZone}
+		if cached := s.dnssecVal.LookupZoneKeys(childZone); cached != nil {
+			childCtx.keys = cached
+		} else if len(childDSRRs) > 0 {
+			dnskeyMsg, ferr := s.secFetchDNSKEY(childServers, childZone)
+			if ferr != nil {
+				return nil, dnssec.StatusBogus, fmt.Errorf("DNSKEY fetch for %s: %w", childZone, ferr)
+			}
+			var parsedDS []dnssec.DS
+			for _, rr := range childDSRRs {
+				if d, e := dnssec.ParseDS(rr); e == nil {
+					parsedDS = append(parsedDS, d)
+				}
+			}
+			dnskeyRRs := secFilterType(dnskeyMsg.Answers, dns.TypeDNSKEY)
+			dnskeyRRSIGs := secFilterType(dnskeyMsg.Answers, dns.TypeRRSIG)
+			validatedKeys, verr := s.dnssecVal.ValidateZoneDNSKEY(
+				childZone, dnskeyRRs, dnskeyRRSIGs, parsedDS, dnskeyMsg.Raw,
+			)
+			if verr != nil {
+				return nil, dnssec.StatusBogus, fmt.Errorf("DNSKEY chain for %s: %w", childZone, verr)
+			}
+			childCtx.keys = validatedKeys
+			var ttl uint32 = 3600
+			if len(dnskeyRRs) > 0 {
+				ttl = dnskeyRRs[0].TTL
+			}
+			s.dnssecVal.CacheZoneKeys(childZone, validatedKeys, ttl)
+		}
+
+		return s.resolveAtDNSSEC(name, qtype, childServers, depth+1, childCtx)
+	}
+
+	return nil, dnssec.StatusBogus, fmt.Errorf("all servers failed for %s: %w", name, lastErr)
+}
+
+func (s *Server) secFetchDNSKEY(servers []string, zone string) (*dns.Message, error) {
+	for _, sv := range servers {
+		resp, err := s.query(sv+":53", zone, dns.TypeDNSKEY)
+		if err != nil {
+			continue
+		}
+		if len(resp.Answers) > 0 {
+			return resp, nil
+		}
+	}
+	return nil, fmt.Errorf("no DNSKEY records returned for %s", zone)
+}
+
+func secDelegatedZone(m *dns.Message) string {
+	for _, rr := range m.Authority {
+		if rr.Type == dns.TypeNS {
+			return strings.ToLower(strings.TrimSuffix(rr.Name, "."))
+		}
+	}
+	return ""
+}
+
+func secFilterType(rrs []dns.RR, t uint16) []dns.RR {
+	var out []dns.RR
+	for _, rr := range rrs {
+		if rr.Type == t {
+			out = append(out, rr)
+		}
+	}
+	return out
+}
+
+func secFilterTypeOwner(rrs []dns.RR, t uint16, zone string) []dns.RR {
+	zone = strings.ToLower(strings.TrimSuffix(zone, "."))
+	var out []dns.RR
+	for _, rr := range rrs {
+		if rr.Type == t && strings.ToLower(strings.TrimSuffix(rr.Name, ".")) == zone {
+			out = append(out, rr)
+		}
+	}
+	return out
 }
 
 func forwarderAddr(server string) string {
@@ -260,12 +450,16 @@ func (s *Server) buildQuery(name string, qtype uint16) *dns.Message {
 	req.SetRD(false)
 	req.Questions = []dns.Question{{Name: name, Type: qtype, Class: dns.ClassIN}}
 
-	if s.cfg.Resolver.EDNS0 {
+	if s.cfg.Resolver.EDNS0 || s.cfg.Resolver.DNSSEC {
+		ttl := uint32(0)
+		if s.cfg.Resolver.DNSSEC {
+			ttl = 0x00008000
+		}
 		req.Additional = append(req.Additional, dns.RR{
 			Name:  "",
 			Type:  41,
 			Class: 4096,
-			TTL:   0,
+			TTL:   ttl,
 			Data:  []byte{},
 		})
 	}

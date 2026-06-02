@@ -21,7 +21,10 @@ const (
 	TypeCERT       = 37
 	TypeDS         = 43
 	TypeSSHFP      = 44
+	TypeRRSIG      = 46
+	TypeNSEC       = 47
 	TypeDNSKEY     = 48
+	TypeNSEC3      = 50
 	TypeTLSA       = 52
 	TypeSMIMEA     = 53
 	TypeOPENPGPKEY = 61
@@ -52,6 +55,7 @@ func (h *Header) SetQR(v bool)      { setBit(&h.Flags, 15, v) }
 func (h *Header) SetAA(v bool)      { setBit(&h.Flags, 10, v) }
 func (h *Header) SetRD(v bool)      { setBit(&h.Flags, 8, v) }
 func (h *Header) SetRA(v bool)      { setBit(&h.Flags, 7, v) }
+func (h *Header) SetAD(v bool)      { setBit(&h.Flags, 5, v) }
 func (h *Header) Rcode() uint16     { return h.Flags & 0x000F }
 func (h *Header) SetRcode(r uint16) { h.Flags = (h.Flags &^ 0x000F) | (r & 0x000F) }
 func (h *Header) RD() bool          { return h.Flags&0x0100 != 0 }

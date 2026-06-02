@@ -55,6 +55,9 @@ resolver:
   max_depth: 10
   edns0: true
   tcp_fallback: true
+  dnssec: false          # full chain validation: DNSKEY > DS > RRSIG from IANA root KSK
+                         # bogus responses -> SERVFAIL; secure responses carry AD bit
+                         # iterative mode only (not forwarder mode)
   rate_limit:
     enabled: true
     qps: 100

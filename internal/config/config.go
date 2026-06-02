@@ -33,6 +33,7 @@ type ResolverConfig struct {
 	MaxConcurrent    int             `yaml:"max_concurrent"`
 	EDNS0            bool            `yaml:"edns0"`
 	TCPFallback      bool            `yaml:"tcp_fallback"`
+	DNSSEC           bool            `yaml:"dnssec"`
 	RateLimit        RateLimitConfig `yaml:"rate_limit"`
 	Cache            CacheConfig     `yaml:"cache"`
 	Forwarder        ForwarderConfig `yaml:"forwarder"`
