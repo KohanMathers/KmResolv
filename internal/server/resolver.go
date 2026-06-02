@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kohanmathers/kmresolv/internal/config"
 	"github.com/kohanmathers/kmresolv/internal/dns"
 	"github.com/kohanmathers/kmresolv/internal/dnssec"
 	"github.com/kohanmathers/kmresolv/internal/logger"
@@ -78,7 +79,10 @@ func (s *Server) resolve(name string, qtype uint16) (*dns.Message, bool, error) 
 	var msg *dns.Message
 	var err error
 
-	if s.cfg.Resolver.Forwarder.Enabled {
+	if zone := lookupZone(s.cfg.Resolver.Zones, name); zone != nil {
+		logger.LogDebug("zone match: %s → %s", name, zone.Domain)
+		msg, err = s.resolveViaServers(name, qtype, zone.Servers)
+	} else if s.cfg.Resolver.Forwarder.Enabled {
 		msg, err = s.resolveViaForwarder(name, qtype)
 		if err != nil && s.cfg.Resolver.Forwarder.FallbackToIterative {
 			logger.LogDebug("forwarder failed, falling back to iterative: %s (%v)", name, err)
@@ -305,8 +309,12 @@ func dotAddr(server string) string {
 }
 
 func (s *Server) resolveViaForwarder(name string, qtype uint16) (*dns.Message, error) {
+	return s.resolveViaServers(name, qtype, s.cfg.Resolver.Forwarder.Servers)
+}
+
+func (s *Server) resolveViaServers(name string, qtype uint16, servers []string) (*dns.Message, error) {
 	timeout := time.Duration(s.cfg.Resolver.Timeout) * time.Second
-	for _, upstream := range s.cfg.Resolver.Forwarder.Servers {
+	for _, upstream := range servers {
 		var msg *dns.Message
 		var err error
 		switch {
@@ -327,6 +335,22 @@ func (s *Server) resolveViaForwarder(name string, qtype uint16) (*dns.Message, e
 		return msg, nil
 	}
 	return nil, fmt.Errorf("all forwarders failed for %s", name)
+}
+
+func lookupZone(zones []config.ZoneConfig, name string) *config.ZoneConfig {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	var best *config.ZoneConfig
+	var bestLen int
+	for i := range zones {
+		domain := strings.ToLower(strings.TrimSuffix(zones[i].Domain, "."))
+		if name == domain || strings.HasSuffix(name, "."+domain) {
+			if len(domain) > bestLen {
+				bestLen = len(domain)
+				best = &zones[i]
+			}
+		}
+	}
+	return best
 }
 
 func (s *Server) queryForwarder(server, name string, qtype uint16, timeout time.Duration) (*dns.Message, error) {

@@ -86,6 +86,25 @@ resolver:
         #      action: deny
 
 ######################################################################
+# ZONES                                                              #
+# Forward specific domains to specific upstream servers.             #
+# Evaluated before the global forwarder; longest domain wins.        #
+# Supports the same server formats as the forwarder (plain, DoT,     #
+# DoH). No fallback to iterative — if zone servers fail, SERVFAIL.   #
+#                                                                    #
+# domain:  DNS suffix to match (e.g. internal, corp.example.com)     #
+# servers: Ordered list of upstreams to try for this zone            #
+######################################################################
+    zones: []
+    #zones:
+    #    - domain: internal
+    #      servers:
+    #          - 192.168.1.1
+    #    - domain: corp.example.com
+    #      servers:
+    #          - tls://10.0.0.53
+
+######################################################################
 # FORWARDER                                                          #
 # enabled:               Forward queries to configured upstreams     #
 # servers:               Upstream resolvers, tried in order.         #

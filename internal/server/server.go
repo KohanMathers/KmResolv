@@ -91,6 +91,9 @@ func New(cfg *config.Config) *Server {
 	s.cache.SetMinTTL(uint32(cfg.Resolver.Cache.MinTTL))
 	s.cache.SetMaxSize(cfg.Resolver.Cache.MaxSize)
 	s.cache.SetPrefetchFn(func(name string, qtype uint16) (*dns.Message, error) {
+		if zone := lookupZone(s.cfg.Resolver.Zones, name); zone != nil {
+			return s.resolveViaServers(name, qtype, zone.Servers)
+		}
 		if s.cfg.Resolver.Forwarder.Enabled {
 			msg, err := s.resolveViaForwarder(name, qtype)
 			if err == nil || !s.cfg.Resolver.Forwarder.FallbackToIterative {

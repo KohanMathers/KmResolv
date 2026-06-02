@@ -38,7 +38,13 @@ type ResolverConfig struct {
 	RateLimit        RateLimitConfig `yaml:"rate_limit"`
 	Cache            CacheConfig     `yaml:"cache"`
 	Forwarder        ForwarderConfig `yaml:"forwarder"`
+	Zones            []ZoneConfig    `yaml:"zones"`
 	ACL              ACLConfig       `yaml:"acl"`
+}
+
+type ZoneConfig struct {
+	Domain  string   `yaml:"domain"`
+	Servers []string `yaml:"servers"`
 }
 
 type ACLConfig struct {
@@ -119,7 +125,7 @@ func defaults() Config {
 			LogLevel: "info",
 		},
 		Resolver: ResolverConfig{
-			ACL: ACLConfig{Default: "allow"},
+			ACL:              ACLConfig{Default: "allow"},
 			Timeout:          3,
 			AttemptTimeoutMs: 800,
 			MaxDepth:         20,
@@ -193,6 +199,14 @@ func (c *Config) validate() error {
 	}
 	if d := strings.ToLower(c.Resolver.ACL.Default); d != "" && d != "allow" && d != "deny" {
 		return fmt.Errorf("resolver.acl.default must be allow or deny")
+	}
+	for i, z := range c.Resolver.Zones {
+		if z.Domain == "" {
+			return fmt.Errorf("resolver.zones[%d]: domain is required", i)
+		}
+		if len(z.Servers) == 0 {
+			return fmt.Errorf("resolver.zones[%d] (%s): at least one server is required", i, z.Domain)
+		}
 	}
 	for i, r := range c.Resolver.ACL.Rules {
 		a := strings.ToLower(r.Action)

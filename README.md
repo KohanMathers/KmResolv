@@ -3,13 +3,17 @@ A self-hosted recursive DNS resolver with ad/tracker filtering, a web dashboard,
 
 ## Features
 - **Recursive resolution** — resolves DNS queries from the root, with configurable depth and EDNS0 support
-- **Response cache** — TTL-aware cache with negative caching and background prefetch
+- **DNSSEC validation** — full chain validation (DNSKEY → DS → RRSIG) from the IANA root KSK; bogus responses return SERVFAIL, secure responses carry the AD bit
+- **Per-domain forwarding** — forward specific zones to specific upstreams (e.g. `internal` → your AD DNS), with longest-suffix matching
+- **DoT / DoH forwarders** — upstream servers can be plain UDP, `tls://` (DNS-over-TLS), or `https://` (DNS-over-HTTPS)
+- **Response cache** — TTL-aware sharded cache with negative caching, background prefetch, configurable min TTL, and an optional max-size cap with soonest-to-expire eviction
 - **TCP fallback** — retries truncated UDP responses over TCP automatically
 - **Rate limiting** — per-source-IP token bucket to protect against noisy clients and accidental open resolver exposure
 - **Access control** — subnet-based allow/deny ACL (first-match-wins) with a configurable default action
-- **Filtering** — blacklist or whitelist mode; loads inline domains and remote/local host-format lists (e.g. StevenBlack/hosts)
-- **Local records** — define custom DNS records in config (all standard types through RFC 9460) for your home network
-- **Web dashboard** — query log, stats, block/unblock controls, and cache management behind optional basic auth
+- **Filtering** — blacklist or whitelist mode; loads inline domains and remote/local host-format lists (e.g. StevenBlack/hosts); reloads on SIGHUP or on a configurable interval
+- **Local records** — define custom DNS records in config (all standard types through RFC 9460, wildcard names supported) for your home network
+- **Web dashboard** — query log, stats, block/unblock and record management, cache controls, and a query-rate sparkline; optional HTTPS and basic auth
+- **Metrics** — Prometheus-compatible `/metrics` endpoint and a rolling stats history at `/api/stats/history`
 - **Minecraft server** — optionally runs a bundled Minestom-based Minecraft server to act as a control room for the same settings managed through the dashboard
 - **CLI** — `status`, `flush`, `block`, `unblock`, and `log` subcommands talk to the running daemon over HTTP
 
@@ -39,7 +43,9 @@ Cold P99 variance is network-dependent — iterative resolution follows real nam
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kohanmathers/kmresolv/main/install.sh | sudo bash
 ```
-The installer fetches the latest release binaries, writes everything to `/etc/kmresolv`, and sets up a systemd service.
+**Fresh install:** fetches the latest release binaries, writes everything to `/etc/kmresolv`, and sets up a systemd service.
+
+**Update:** if kmresolv is already installed the script merges new config keys into your existing `config.yml` without overwriting your changes, merges any service file changes while preserving local overrides, redownloads the binary and Minecraft jar, then performs a `daemon-reload` and service restart.
 
 ## Configuration
 The default config is installed at `/etc/kmresolv/config.yml`. Edit it and restart the service.
@@ -76,6 +82,13 @@ resolver:
       #   action: allow
       # - subnet: 0.0.0.0/0
       #   action: deny
+  zones:                             # per-domain forwarding; longest match wins
+    - domain: internal               # forward *.internal to your AD/local DNS
+      servers:
+        - 192.168.1.1
+    - domain: corp.example.com
+      servers:
+        - tls://10.0.0.53
   forwarder:
     enabled: false
     servers:
@@ -138,6 +151,10 @@ All subcommands accept `--host` and `--port` to target a non-default dashboard a
 systemctl status kmresolv
 systemctl restart kmresolv
 journalctl -u kmresolv -f
+```
+Send `SIGHUP` to reload filter lists without restarting:
+```bash
+systemctl kill -s HUP kmresolv
 ```
 
 ## Minecraft server
