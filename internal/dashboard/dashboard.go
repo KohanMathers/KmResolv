@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -233,6 +234,38 @@ func Start(cfg *config.Config, srv *server.Server, version string) {
 			"cache_size":     st.CacheSize,
 			"cache_negative": st.CacheNegative,
 		})
+	})
+
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		st := srv.Stats()
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		fmt.Fprintf(w, "# HELP kmresolv_queries_total Total DNS queries received\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_queries_total counter\n")
+		fmt.Fprintf(w, "kmresolv_queries_total %d\n\n", st.TotalQueries)
+
+		fmt.Fprintf(w, "# HELP kmresolv_cache_hits_total Queries answered from cache\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_cache_hits_total counter\n")
+		fmt.Fprintf(w, "kmresolv_cache_hits_total %d\n\n", st.CacheHits)
+
+		fmt.Fprintf(w, "# HELP kmresolv_blocked_total Queries blocked by filter\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_blocked_total counter\n")
+		fmt.Fprintf(w, "kmresolv_blocked_total %d\n\n", st.Blocked)
+
+		fmt.Fprintf(w, "# HELP kmresolv_latency_ms_total Sum of query latencies in milliseconds\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_latency_ms_total counter\n")
+		fmt.Fprintf(w, "kmresolv_latency_ms_total %d\n\n", st.TotalLatencyMs)
+
+		fmt.Fprintf(w, "# HELP kmresolv_cache_entries Current number of cached records\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_cache_entries gauge\n")
+		fmt.Fprintf(w, "kmresolv_cache_entries %d\n\n", st.CacheSize)
+
+		fmt.Fprintf(w, "# HELP kmresolv_cache_negative_entries Current number of cached NXDOMAIN responses\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_cache_negative_entries gauge\n")
+		fmt.Fprintf(w, "kmresolv_cache_negative_entries %d\n\n", st.CacheNegative)
+
+		fmt.Fprintf(w, "# HELP kmresolv_uptime_seconds Seconds since the server started\n")
+		fmt.Fprintf(w, "# TYPE kmresolv_uptime_seconds gauge\n")
+		fmt.Fprintf(w, "kmresolv_uptime_seconds %d\n", st.UptimeSeconds)
 	})
 
 	mux.HandleFunc("/api/cache/flush", func(w http.ResponseWriter, r *http.Request) {
