@@ -31,6 +31,15 @@ func TestDefaults(t *testing.T) {
 	if !cfg.Resolver.TCPFallback {
 		t.Error("tcp_fallback should default to true")
 	}
+	if !cfg.Resolver.RateLimit.Enabled {
+		t.Error("rate_limit.enabled should default to true")
+	}
+	if cfg.Resolver.RateLimit.QPS != 100 {
+		t.Errorf("rate_limit.qps = %d, want 100", cfg.Resolver.RateLimit.QPS)
+	}
+	if cfg.Resolver.RateLimit.Burst != 200 {
+		t.Errorf("rate_limit.burst = %d, want 200", cfg.Resolver.RateLimit.Burst)
+	}
 	if !cfg.Resolver.Cache.Enabled {
 		t.Error("cache.enabled should default to true")
 	}
@@ -126,6 +135,24 @@ func TestLoadConfigInvalidFilterMode(t *testing.T) {
 	_, err := LoadConfig(path)
 	if err == nil {
 		t.Fatal("invalid filter mode should fail validation")
+	}
+}
+
+func TestLoadConfigInvalidRateLimit(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  port: 53
+resolver:
+  rate_limit:
+    enabled: true
+    qps: 0
+    burst: 10
+filtering:
+  mode: off
+`)
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("enabled rate limiter with qps 0 should fail validation")
 	}
 }
 
@@ -279,6 +306,18 @@ func TestValidate(t *testing.T) {
 	badMode.Filtering.Mode = "invalid"
 	if err := badMode.validate(); err == nil {
 		t.Error("invalid filter mode should fail validation")
+	}
+
+	badRate := valid
+	badRate.Resolver.RateLimit = RateLimitConfig{Enabled: true, QPS: -1, Burst: 10}
+	if err := badRate.validate(); err == nil {
+		t.Error("negative rate limit qps should fail validation")
+	}
+
+	badBurst := valid
+	badBurst.Resolver.RateLimit = RateLimitConfig{Enabled: true, QPS: 10, Burst: 0}
+	if err := badBurst.validate(); err == nil {
+		t.Error("enabled rate limiter with burst 0 should fail validation")
 	}
 
 	unknownType := valid

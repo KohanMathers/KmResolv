@@ -17,6 +17,7 @@ import (
 type fakeConn struct {
 	mu      sync.Mutex
 	written []byte
+	writes  int
 }
 
 func (f *fakeConn) WriteTo(b []byte, addr net.Addr) (int, error) {
@@ -25,6 +26,7 @@ func (f *fakeConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 	cp := make([]byte, len(b))
 	copy(cp, b)
 	f.written = cp
+	f.writes++
 	return len(b), nil
 }
 
@@ -32,6 +34,12 @@ func (f *fakeConn) lastWritten() []byte {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.written
+}
+
+func (f *fakeConn) writeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.writes
 }
 
 func (f *fakeConn) ReadFrom(b []byte) (int, net.Addr, error) { return 0, nil, errors.New("not used") }
@@ -297,6 +305,37 @@ func TestCfg(t *testing.T) {
 	}
 }
 
+func TestSourceIP(t *testing.T) {
+	cases := []struct {
+		addr net.Addr
+		want string
+	}{
+		{&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 53000}, "192.0.2.10"},
+		{&net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 53000}, "2001:db8::1"},
+	}
+	for _, c := range cases {
+		if got := sourceIP(c.addr); got != c.want {
+			t.Errorf("sourceIP(%v) = %q, want %q", c.addr, got, c.want)
+		}
+	}
+}
+
+func TestRateLimiterBurst(t *testing.T) {
+	rl := newRateLimiter(1, 2)
+	if !rl.allow("192.0.2.10") {
+		t.Fatal("first query should be allowed")
+	}
+	if !rl.allow("192.0.2.10") {
+		t.Fatal("second query should be allowed by burst")
+	}
+	if rl.allow("192.0.2.10") {
+		t.Fatal("third immediate query should be rate limited")
+	}
+	if !rl.allow("192.0.2.11") {
+		t.Fatal("different source IP should have its own bucket")
+	}
+}
+
 // ---- handleQuery ----
 
 func TestHandleQueryBlocked(t *testing.T) {
@@ -440,6 +479,39 @@ func TestHandleQueryResponseID(t *testing.T) {
 	}
 	if resp.ID != 0xDEAD {
 		t.Errorf("response ID = %#x, want 0xDEAD", resp.ID)
+	}
+}
+
+func TestHandleQueryRateLimited(t *testing.T) {
+	cfg := &config.Config{
+		Resolver: config.ResolverConfig{
+			Timeout:  3,
+			MaxDepth: 10,
+			RateLimit: config.RateLimitConfig{
+				Enabled: true,
+				QPS:     1,
+				Burst:   1,
+			},
+			Cache: config.CacheConfig{NegativeTTL: 300},
+		},
+		Filtering: config.FilterConfig{Mode: "off"},
+		Records: []config.RecordConfig{
+			{Name: "custom.test", Type: "A", TTL: 60, Value: "9.8.7.6"},
+		},
+	}
+
+	s := New(cfg)
+	conn := &fakeConn{}
+	src := &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 9999}
+
+	s.handleQuery(conn, src, packQuery(t, "custom.test", dns.TypeA))
+	s.handleQuery(conn, src, packQuery(t, "custom.test", dns.TypeA))
+
+	if got := conn.writeCount(); got != 1 {
+		t.Errorf("writes = %d, want 1", got)
+	}
+	if st := s.Stats(); st.TotalQueries != 1 {
+		t.Errorf("TotalQueries = %d, want 1", st.TotalQueries)
 	}
 }
 

@@ -19,6 +19,7 @@ server:
 # max_concurrent:      Simultaneous upstream lookups, 0 = unlimited  #
 # edns0:               Advertise EDNS0 for larger UDP payload support #
 # tcp_fallback:        Retry over TCP if a UDP response is truncated  #
+# rate_limit:          Per-source-IP token bucket for client queries #
 ######################################################################
 resolver:
     timeout: 3
@@ -27,6 +28,17 @@ resolver:
     max_concurrent: 200
     edns0: true
     tcp_fallback: true
+
+######################################################################
+# RATE LIMIT                                                         #
+# enabled: Enable per-source-IP query limiting                       #
+# qps:     Tokens added per second for each source IP                 #
+# burst:   Maximum saved tokens per source IP                         #
+######################################################################
+    rate_limit:
+        enabled: true
+        qps: 100
+        burst: 200
 
 ######################################################################
 # CACHE                                                              #

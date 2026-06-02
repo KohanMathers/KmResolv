@@ -32,8 +32,15 @@ type ResolverConfig struct {
 	MaxConcurrent    int             `yaml:"max_concurrent"`
 	EDNS0            bool            `yaml:"edns0"`
 	TCPFallback      bool            `yaml:"tcp_fallback"`
+	RateLimit        RateLimitConfig `yaml:"rate_limit"`
 	Cache            CacheConfig     `yaml:"cache"`
 	Forwarder        ForwarderConfig `yaml:"forwarder"`
+}
+
+type RateLimitConfig struct {
+	Enabled bool `yaml:"enabled"`
+	QPS     int  `yaml:"qps"`
+	Burst   int  `yaml:"burst"`
 }
 
 type ForwarderConfig struct {
@@ -101,6 +108,11 @@ func defaults() Config {
 			MaxConcurrent:    64,
 			EDNS0:            true,
 			TCPFallback:      true,
+			RateLimit: RateLimitConfig{
+				Enabled: true,
+				QPS:     100,
+				Burst:   200,
+			},
 			Cache: CacheConfig{
 				Enabled:     true,
 				NegativeTTL: 300,
@@ -160,6 +172,18 @@ func LoadConfig(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port %d out of range", c.Server.Port)
+	}
+	if c.Resolver.RateLimit.QPS < 0 {
+		return fmt.Errorf("resolver.rate_limit.qps must be >= 0")
+	}
+	if c.Resolver.RateLimit.Burst < 0 {
+		return fmt.Errorf("resolver.rate_limit.burst must be >= 0")
+	}
+	if c.Resolver.RateLimit.Enabled && c.Resolver.RateLimit.QPS == 0 {
+		return fmt.Errorf("resolver.rate_limit.qps must be > 0 when rate limiting is enabled")
+	}
+	if c.Resolver.RateLimit.Enabled && c.Resolver.RateLimit.Burst == 0 {
+		return fmt.Errorf("resolver.rate_limit.burst must be > 0 when rate limiting is enabled")
 	}
 	mode := strings.ToLower(c.Filtering.Mode)
 	if mode != "blacklist" && mode != "whitelist" && mode != "off" {

@@ -29,6 +29,7 @@ type Server struct {
 	tcpPool   *connPool
 	dotPool   *connPool
 	dohClient *http.Client
+	limiter   *rateLimiter
 	rawPool   sync.Pool
 	inflight  sync.Map
 	sem       chan struct{}
@@ -74,6 +75,9 @@ func New(cfg *config.Config) *Server {
 	}
 	if cfg.Resolver.MaxConcurrent > 0 {
 		s.sem = make(chan struct{}, cfg.Resolver.MaxConcurrent)
+	}
+	if cfg.Resolver.RateLimit.Enabled {
+		s.limiter = newRateLimiter(cfg.Resolver.RateLimit.QPS, cfg.Resolver.RateLimit.Burst)
 	}
 	s.cache.SetMinTTL(uint32(cfg.Resolver.Cache.MinTTL))
 	s.cache.SetPrefetchFn(func(name string, qtype uint16) (*dns.Message, error) {
@@ -138,6 +142,14 @@ func (s *Server) Start() error {
 
 func (s *Server) handleQuery(conn net.PacketConn, src net.Addr, raw []byte) {
 	start := time.Now()
+	if s.limiter != nil {
+		ip := sourceIP(src)
+		if !s.limiter.allow(ip) {
+			logger.LogDebug("rate limited query from %s", ip)
+			return
+		}
+	}
+
 	msg, err := dns.ParseMessage(raw)
 	if err != nil {
 		logger.LogError("parse error from %s: %v", src, err)

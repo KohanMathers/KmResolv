@@ -5,6 +5,7 @@ A self-hosted recursive DNS resolver with ad/tracker filtering, a web dashboard,
 - **Recursive resolution** — resolves DNS queries from the root, with configurable depth and EDNS0 support
 - **Response cache** — TTL-aware cache with negative caching and background prefetch
 - **TCP fallback** — retries truncated UDP responses over TCP automatically
+- **Rate limiting** — per-source-IP token bucket to protect against noisy clients and accidental open resolver exposure
 - **Filtering** — blacklist or whitelist mode; loads inline domains and remote/local host-format lists (e.g. StevenBlack/hosts)
 - **Local records** — define custom DNS records in config (all standard types through RFC 9460) for your home network
 - **Web dashboard** — query log, stats, block/unblock controls, and cache management behind optional basic auth
@@ -53,6 +54,10 @@ resolver:
   max_depth: 10
   edns0: true
   tcp_fallback: true
+  rate_limit:
+    enabled: true
+    qps: 100
+    burst: 200
   cache:
     enabled: true
     negative_ttl: 300
