@@ -160,14 +160,21 @@ func (s *Server) resolveAtDNSSEC(
 							}
 						}
 						logger.LogDebug("sec: CNAME %s → %s", name, target)
+						if hasTerminalRecords(resp.Answers, target, qtype) {
+							return resp, dnssec.StatusInsecure, nil
+						}
 						if s.cache.IsNegative(target, qtype) {
 							return nil, dnssec.StatusInsecure, fmt.Errorf("NXDOMAIN: %s does not exist", target)
 						}
 						if cached := s.cache.Get(target, qtype, s.cfg); cached != nil {
-							return cached, dnssec.StatusSecure, nil
+							return prependCNAME(resp, rr, cached), dnssec.StatusSecure, nil
 						}
-						return s.resolveAtDNSSEC(target, qtype, RootServers, depth+1,
+						inner, innerStatus, innerErr := s.resolveAtDNSSEC(target, qtype, RootServers, depth+1,
 							secCtx{zone: ".", keys: s.dnssecVal.LookupZoneKeys(".")})
+						if innerErr != nil {
+							return nil, innerStatus, innerErr
+						}
+						return prependCNAME(resp, rr, inner), innerStatus, nil
 					}
 				}
 			}
@@ -431,14 +438,21 @@ func (s *Server) resolveAt(name string, qtype uint16, servers []string, depth in
 							return nil, fmt.Errorf("cname parse: %w", err)
 						}
 						logger.LogDebug("following CNAME %s → %s", name, target)
+						if hasTerminalRecords(resp.Answers, target, qtype) {
+							return resp, nil
+						}
 						if s.cache.IsNegative(target, qtype) {
 							return nil, fmt.Errorf("NXDOMAIN: %s does not exist", target)
 						}
 						if cached := s.cache.Get(target, qtype, s.cfg); cached != nil {
 							logger.LogDebug("CNAME target cache hit: %s", target)
-							return cached, nil
+							return prependCNAME(resp, rr, cached), nil
 						}
-						return s.resolveAt(target, qtype, RootServers, depth+1)
+						inner, err := s.resolveAt(target, qtype, RootServers, depth+1)
+						if err != nil {
+							return nil, err
+						}
+						return prependCNAME(resp, rr, inner), nil
 					}
 				}
 			}
@@ -693,6 +707,45 @@ func extractGlue(m *dns.Message, nsNames []string) []string {
 func parseCNAME(m *dns.Message, rr dns.RR) (string, error) {
 	name, _, err := dns.ParseName(m.Raw, rr.Offset)
 	return name, err
+}
+
+func hasTerminalRecords(answers []dns.RR, name string, qtype uint16) bool {
+	for _, rr := range answers {
+		if rr.Type == qtype && strings.EqualFold(rr.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func prependCNAME(cnameMsg *dns.Message, cnameRR dns.RR, inner *dns.Message) *dns.Message {
+	out := &dns.Message{}
+	out.Header = inner.Header
+	out.Answers = make([]dns.RR, 0, 1+len(inner.Answers))
+	out.Answers = append(out.Answers, materializeRR(cnameRR, cnameMsg.Raw))
+	out.Answers = append(out.Answers, inner.Answers...)
+	return out
+}
+
+func materializeRR(rr dns.RR, raw []byte) dns.RR {
+	if raw == nil {
+		return rr
+	}
+	switch rr.Type {
+	case dns.TypeCNAME, dns.TypeNS, dns.TypePTR:
+		if name, _, err := dns.ParseName(raw, rr.Offset); err == nil {
+			rr.Data = dns.PackName(name)
+		}
+	case dns.TypeMX:
+		if len(rr.Data) >= 2 {
+			if name, _, err := dns.ParseName(raw, rr.Offset+2); err == nil {
+				pref := []byte{rr.Data[0], rr.Data[1]}
+				rr.Data = append(pref, dns.PackName(name)...)
+			}
+		}
+	}
+	rr.Offset = 0
+	return rr
 }
 
 func (s *Server) resolveNSAddr(ns string, qtype uint16, depth int) (*dns.Message, error) {
