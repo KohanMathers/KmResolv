@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -231,8 +232,10 @@ func (m *Message) Pack() ([]byte, error) {
 	binary.BigEndian.PutUint16(buf[8:10], uint16(len(m.Authority)))
 	binary.BigEndian.PutUint16(buf[10:12], uint16(len(m.Additional)))
 
+	names := make(map[string]int)
+
 	for _, q := range m.Questions {
-		buf = append(buf, packName(q.Name)...)
+		buf = packCompressedName(buf, q.Name, names)
 		buf = append(buf, 0, 0, 0, 0)
 		binary.BigEndian.PutUint16(buf[len(buf)-4:], q.Type)
 		binary.BigEndian.PutUint16(buf[len(buf)-2:], q.Class)
@@ -240,15 +243,15 @@ func (m *Message) Pack() ([]byte, error) {
 
 	for _, section := range [][]RR{m.Answers, m.Authority, m.Additional} {
 		for _, rr := range section {
-			buf = append(buf, packName(rr.Name)...)
-			rdata := packRdata(rr, m.Raw)
-			fixed := make([]byte, 10)
-			binary.BigEndian.PutUint16(fixed[0:2], rr.Type)
-			binary.BigEndian.PutUint16(fixed[2:4], rr.Class)
-			binary.BigEndian.PutUint32(fixed[4:8], rr.TTL)
-			binary.BigEndian.PutUint16(fixed[8:10], uint16(len(rdata)))
-			buf = append(buf, fixed...)
-			buf = append(buf, rdata...)
+			buf = packCompressedName(buf, rr.Name, names)
+			fixed := len(buf)
+			buf = append(buf, make([]byte, 10)...)
+			rdStart := len(buf)
+			buf = appendRdata(buf, rr, m.Raw, names)
+			binary.BigEndian.PutUint16(buf[fixed:fixed+2], rr.Type)
+			binary.BigEndian.PutUint16(buf[fixed+2:fixed+4], rr.Class)
+			binary.BigEndian.PutUint32(buf[fixed+4:fixed+8], rr.TTL)
+			binary.BigEndian.PutUint16(buf[fixed+8:fixed+10], uint16(len(buf)-rdStart))
 		}
 	}
 	return buf, nil
@@ -276,25 +279,94 @@ func packName(name string) []byte {
 	return buf
 }
 
-func packRdata(rr RR, raw []byte) []byte {
-	switch rr.Type {
-	case TypeNS, TypeCNAME, TypeMX, TypePTR:
-		nameOffset := rr.Offset
-		if rr.Type == TypeMX {
-			nameOffset += 2
+func packCompressedName(buf []byte, name string, names map[string]int) []byte {
+	name = strings.Trim(name, ".")
+	if name == "" {
+		return append(buf, 0)
+	}
+	labels := strings.Split(name, ".")
+	for i, label := range labels {
+		if label == "" {
+			continue
 		}
-		if raw != nil && nameOffset < len(raw) {
-			name, _, err := parseName(raw, nameOffset)
-			if err == nil {
-				if rr.Type == TypeMX {
-					pref := rr.Data[:2]
-					return append(pref, packName(name)...)
-				}
-				return packName(name)
+		suffix := strings.ToLower(strings.Join(labels[i:], "."))
+		if off, ok := names[suffix]; ok && off <= 0x3FFF {
+			return append(buf, byte(0xC0|off>>8), byte(off))
+		}
+		if len(buf) <= 0x3FFF {
+			names[suffix] = len(buf)
+		}
+		buf = append(buf, byte(len(label)))
+		buf = append(buf, label...)
+	}
+	return append(buf, 0)
+}
+
+func appendRdata(buf []byte, rr RR, raw []byte, names map[string]int) []byte {
+	switch rr.Type {
+	case TypeNS, TypeCNAME, TypePTR, TypeMX:
+		if rr.Type == TypeMX {
+			if len(rr.Data) >= 2 {
+				buf = append(buf, rr.Data[0], rr.Data[1])
+			} else {
+				buf = append(buf, 0, 0)
 			}
 		}
+		if name, ok := rdataName(rr, raw); ok {
+			return packCompressedName(buf, name, names)
+		}
 	}
-	return rr.Data
+	return append(buf, rr.Data...)
+}
+
+func rdataName(rr RR, raw []byte) (string, bool) {
+	off := rr.Offset
+	if rr.Type == TypeMX {
+		off += 2
+	}
+	if raw != nil && off >= 12 && off < len(raw) {
+		if name, _, err := parseName(raw, off); err == nil {
+			return name, true
+		}
+	}
+	data := rr.Data
+	if rr.Type == TypeMX {
+		if len(data) < 2 {
+			return "", false
+		}
+		data = data[2:]
+	}
+	name, _, err := parseUncompressedName(data)
+	if err != nil {
+		return "", false
+	}
+	return name, true
+}
+
+func parseUncompressedName(data []byte) (string, int, error) {
+	var name []byte
+	i := 0
+	for {
+		if i >= len(data) {
+			return "", 0, errors.New("name parse: offset out of bounds")
+		}
+		length := int(data[i])
+		if length == 0 {
+			return string(name), i + 1, nil
+		}
+		if length&0xC0 != 0 {
+			return "", 0, errors.New("name parse: compression pointer in uncompressed name")
+		}
+		i++
+		if i+length > len(data) {
+			return "", 0, errors.New("name parse: label out of bounds")
+		}
+		if len(name) > 0 {
+			name = append(name, '.')
+		}
+		name = append(name, data[i:i+length]...)
+		i += length
+	}
 }
 
 func ParseA(data []byte) (string, error) {

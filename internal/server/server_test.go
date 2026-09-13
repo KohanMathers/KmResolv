@@ -631,3 +631,90 @@ func TestForwarderAddrWithPort(t *testing.T) {
 		t.Errorf("expected :53 appended, got %s", got)
 	}
 }
+
+func TestPrependCNAMEMaterializesInnerChain(t *testing.T) {
+	inner := &dns.Message{}
+	inner.SetQR(true)
+	inner.Questions = []dns.Question{{Name: "edge-term4.roblox.com", Type: dns.TypeA, Class: dns.ClassIN}}
+	inner.Answers = []dns.RR{
+		{Name: "edge-term4.roblox.com", Type: dns.TypeCNAME, Class: dns.ClassIN, TTL: 60, Data: dns.PackName("edge-term4-lhr4.roblox.com")},
+		{Name: "edge-term4-lhr4.roblox.com", Type: dns.TypeA, Class: dns.ClassIN, TTL: 60, Data: []byte{128, 116, 31, 3}},
+	}
+	innerWire, err := inner.Pack()
+	if err != nil {
+		t.Fatalf("pack inner: %v", err)
+	}
+	innerParsed, err := dns.ParseMessage(innerWire)
+	if err != nil {
+		t.Fatalf("parse inner: %v", err)
+	}
+
+	mid := &dns.Message{}
+	mid.Questions = []dns.Question{{Name: "titanium.roblox.com", Type: dns.TypeA, Class: dns.ClassIN}}
+	mid.Answers = []dns.RR{
+		{Name: "titanium.roblox.com", Type: dns.TypeCNAME, Class: dns.ClassIN, TTL: 60, Data: dns.PackName("edge-term4.roblox.com")},
+	}
+	midWire, err := mid.Pack()
+	if err != nil {
+		t.Fatalf("pack mid: %v", err)
+	}
+	midParsed, err := dns.ParseMessage(midWire)
+	if err != nil {
+		t.Fatalf("parse mid: %v", err)
+	}
+
+	outer := &dns.Message{}
+	outer.Questions = []dns.Question{{Name: "apis.roblox.com", Type: dns.TypeA, Class: dns.ClassIN}}
+	outer.Answers = []dns.RR{
+		{Name: "apis.roblox.com", Type: dns.TypeCNAME, Class: dns.ClassIN, TTL: 60, Data: dns.PackName("titanium.roblox.com")},
+	}
+	outerWire, err := outer.Pack()
+	if err != nil {
+		t.Fatalf("pack outer: %v", err)
+	}
+	outerParsed, err := dns.ParseMessage(outerWire)
+	if err != nil {
+		t.Fatalf("parse outer: %v", err)
+	}
+
+	assembled := prependCNAME(outerParsed, outerParsed.Answers[0], prependCNAME(midParsed, midParsed.Answers[0], innerParsed))
+	if len(assembled.Answers) != 4 {
+		t.Fatalf("assembled answers = %d, want 4", len(assembled.Answers))
+	}
+	for i, rr := range assembled.Answers {
+		if rr.Type != dns.TypeCNAME {
+			continue
+		}
+		for _, b := range rr.Data {
+			if b&0xC0 == 0xC0 {
+				t.Fatalf("answer[%d] CNAME Data still contains a compression pointer from another packet", i)
+			}
+		}
+	}
+
+	assembled.ID = 0x3333
+	assembled.SetQR(true)
+	assembled.SetRA(true)
+	assembled.Questions = []dns.Question{{Name: "apis.roblox.com", Type: dns.TypeA, Class: dns.ClassIN}}
+	packed, err := assembled.Pack()
+	if err != nil {
+		t.Fatalf("Pack assembled: %v", err)
+	}
+	got, err := dns.ParseMessage(packed)
+	if err != nil {
+		t.Fatalf("client parse of assembled chain: %v", err)
+	}
+	if len(got.Answers) != 4 {
+		t.Fatalf("packed answers = %d, want 4", len(got.Answers))
+	}
+	target, _, err := dns.ParseName(got.Raw, got.Answers[2].Offset)
+	if err != nil {
+		t.Fatalf("third CNAME target: %v", err)
+	}
+	if target != "edge-term4-lhr4.roblox.com" {
+		t.Errorf("third CNAME target = %q", target)
+	}
+	if len(got.Answers[3].Data) != 4 || got.Answers[3].Data[0] != 128 || got.Answers[3].Data[3] != 3 {
+		t.Errorf("A rdata = %v, want 128.116.31.3", got.Answers[3].Data)
+	}
+}

@@ -723,24 +723,25 @@ func prependCNAME(cnameMsg *dns.Message, cnameRR dns.RR, inner *dns.Message) *dn
 	out.Header = inner.Header
 	out.Answers = make([]dns.RR, 0, 1+len(inner.Answers))
 	out.Answers = append(out.Answers, materializeRR(cnameRR, cnameMsg.Raw))
-	out.Answers = append(out.Answers, inner.Answers...)
+	for _, rr := range inner.Answers {
+		out.Answers = append(out.Answers, materializeRR(rr, inner.Raw))
+	}
 	return out
 }
 
 func materializeRR(rr dns.RR, raw []byte) dns.RR {
-	if raw == nil {
-		return rr
-	}
-	switch rr.Type {
-	case dns.TypeCNAME, dns.TypeNS, dns.TypePTR:
-		if name, _, err := dns.ParseName(raw, rr.Offset); err == nil {
-			rr.Data = dns.PackName(name)
-		}
-	case dns.TypeMX:
-		if len(rr.Data) >= 2 {
-			if name, _, err := dns.ParseName(raw, rr.Offset+2); err == nil {
-				pref := []byte{rr.Data[0], rr.Data[1]}
-				rr.Data = append(pref, dns.PackName(name)...)
+	if raw != nil && rr.Offset >= 12 {
+		switch rr.Type {
+		case dns.TypeCNAME, dns.TypeNS, dns.TypePTR:
+			if name, _, err := dns.ParseName(raw, rr.Offset); err == nil {
+				rr.Data = dns.PackName(name)
+			}
+		case dns.TypeMX:
+			if len(rr.Data) >= 2 {
+				if name, _, err := dns.ParseName(raw, rr.Offset+2); err == nil {
+					pref := []byte{rr.Data[0], rr.Data[1]}
+					rr.Data = append(pref, dns.PackName(name)...)
+				}
 			}
 		}
 	}
