@@ -118,6 +118,19 @@ func (s *Server) filterReloadLoop() {
 	}
 }
 
+func (s *Server) poolJanitorLoop() {
+	ticker := time.NewTicker(poolReapInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		closed := s.pool.reapIdle(poolIdleTimeout)
+		closed += s.tcpPool.reapIdle(poolIdleTimeout)
+		closed += s.dotPool.reapIdle(poolIdleTimeout)
+		if closed > 0 {
+			logger.LogDebug("pool janitor closed %d idle upstream connections", closed)
+		}
+	}
+}
+
 func (s *Server) History() []HistoryBucket {
 	return s.history.snapshot()
 }
@@ -145,6 +158,7 @@ func (s *Server) sampleHistory() {
 
 func (s *Server) Start() error {
 	go s.sampleHistory()
+	go s.poolJanitorLoop()
 	if s.cfg.Filtering.ReloadIntervalHours > 0 {
 		go s.filterReloadLoop()
 	}

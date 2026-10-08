@@ -11,10 +11,13 @@ import (
 const poolSizePerServer = 16
 const tcpPoolSizePerServer = 4
 const poolNumShards = 16
+const poolIdleTimeout = 60 * time.Second
+const poolReapInterval = 30 * time.Second
 
 type pooledConn struct {
 	net.Conn
-	nextID uint16
+	nextID   uint16
+	lastUsed time.Time
 }
 
 type poolShard struct {
@@ -111,6 +114,7 @@ func (p *connPool) put(server string, pc *pooledConn, failed bool) {
 		return
 	}
 	pc.SetDeadline(time.Time{})
+	pc.lastUsed = time.Now()
 	s := p.shard(server)
 	s.mu.Lock()
 	if len(s.conns[server]) < p.maxPerServer {
@@ -120,4 +124,31 @@ func (p *connPool) put(server string, pc *pooledConn, failed bool) {
 	}
 	s.mu.Unlock()
 	pc.Close()
+}
+
+func (p *connPool) reapIdle(maxIdle time.Duration) int {
+	closed := 0
+	now := time.Now()
+	for i := range p.shards {
+		s := &p.shards[i]
+		s.mu.Lock()
+		for server, list := range s.conns {
+			fresh := list[:0]
+			for _, pc := range list {
+				if now.Sub(pc.lastUsed) >= maxIdle {
+					pc.Close()
+					closed++
+				} else {
+					fresh = append(fresh, pc)
+				}
+			}
+			if len(fresh) == 0 {
+				delete(s.conns, server)
+			} else {
+				s.conns[server] = fresh
+			}
+		}
+		s.mu.Unlock()
+	}
+	return closed
 }
