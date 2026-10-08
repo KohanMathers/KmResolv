@@ -155,7 +155,7 @@ func (s *Server) resolveAtDNSSEC(
 						if len(ctx.keys) > 0 {
 							cnameRRs := secFilterType(resp.Answers, dns.TypeCNAME)
 							rrsigs := secFilterType(resp.Answers, dns.TypeRRSIG)
-							if verr := dnssec.VerifyAnyRRSIG(ctx.keys, cnameRRs, rrsigs, dns.TypeCNAME, resp.Raw); verr != nil {
+							if verr := s.secVerifyWithWalk(shuffled, ctx, cnameRRs, rrsigs, dns.TypeCNAME, resp.Raw); verr != nil {
 								return nil, dnssec.StatusBogus, fmt.Errorf("CNAME RRSIG for %s: %w", name, verr)
 							}
 						}
@@ -184,7 +184,7 @@ func (s *Server) resolveAtDNSSEC(
 				ansRRs := secFilterType(resp.Answers, qtype)
 				rrsigs := secFilterType(resp.Answers, dns.TypeRRSIG)
 				if len(ansRRs) > 0 {
-					if verr := dnssec.VerifyAnyRRSIG(ctx.keys, ansRRs, rrsigs, qtype, resp.Raw); verr != nil {
+					if verr := s.secVerifyWithWalk(shuffled, ctx, ansRRs, rrsigs, qtype, resp.Raw); verr != nil {
 						return nil, dnssec.StatusBogus, fmt.Errorf("RRSIG for %s type %d: %w", name, qtype, verr)
 					}
 					status = dnssec.StatusSecure
@@ -204,7 +204,7 @@ func (s *Server) resolveAtDNSSEC(
 		childDSRRs := secFilterTypeOwner(resp.Authority, dns.TypeDS, childZone)
 		if len(ctx.keys) > 0 && len(childDSRRs) > 0 {
 			rrsigs := secFilterType(resp.Authority, dns.TypeRRSIG)
-			if verr := dnssec.VerifyAnyRRSIG(ctx.keys, childDSRRs, rrsigs, dns.TypeDS, resp.Raw); verr != nil {
+			if verr := s.secVerifyWithWalk(shuffled, ctx, childDSRRs, rrsigs, dns.TypeDS, resp.Raw); verr != nil {
 				return nil, dnssec.StatusBogus, fmt.Errorf("DS RRSIG for %s: %w", childZone, verr)
 			}
 		}
@@ -268,6 +268,160 @@ func (s *Server) secFetchDNSKEY(servers []string, zone string) (*dns.Message, er
 		}
 	}
 	return nil, fmt.Errorf("no DNSKEY records returned for %s", zone)
+}
+
+func rrsigSigner(rrsigs []dns.RR, typeCovered uint16) string {
+	for _, rr := range rrsigs {
+		if rr.Type != dns.TypeRRSIG {
+			continue
+		}
+		sig, err := dnssec.ParseRRSIG(rr)
+		if err != nil {
+			continue
+		}
+		if sig.TypeCovered != typeCovered {
+			continue
+		}
+		return strings.ToLower(strings.TrimSuffix(sig.SignerName, "."))
+	}
+	return ""
+}
+
+func (s *Server) secVerifyWithWalk(
+	parentServers []string,
+	ctx secCtx,
+	rrset []dns.RR,
+	rrsigs []dns.RR,
+	typeCovered uint16,
+	raw []byte,
+) error {
+	verifyKeys := ctx.keys
+	signer := rrsigSigner(rrsigs, typeCovered)
+	if signer != "" {
+		normCtx := strings.ToLower(strings.TrimSuffix(ctx.zone, "."))
+		if signer != normCtx && isDescendantZone(signer, normCtx) {
+			logger.LogDebug("sec: RRSIG signer %s deeper than ctx %s; walking chain", signer, ctx.zone)
+			walked, werr := s.secWalkToZone(parentServers, ctx, signer)
+			if werr != nil {
+				return fmt.Errorf("walk %s→%s: %w", ctx.zone, signer, werr)
+			}
+			verifyKeys = walked.keys
+		}
+	}
+	return dnssec.VerifyAnyRRSIG(verifyKeys, rrset, rrsigs, typeCovered, raw)
+}
+
+func isDescendantZone(child, ancestor string) bool {
+	child = strings.ToLower(strings.TrimSuffix(child, "."))
+	ancestor = strings.ToLower(strings.TrimSuffix(ancestor, "."))
+	if child == "" || child == ancestor {
+		return false
+	}
+	if ancestor == "" {
+		return true
+	}
+	return strings.HasSuffix(child, "."+ancestor)
+}
+
+func zoneChain(parent, target string) []string {
+	parent = strings.ToLower(strings.TrimSuffix(parent, "."))
+	target = strings.ToLower(strings.TrimSuffix(target, "."))
+	if !isDescendantZone(target, parent) {
+		return nil
+	}
+	var remainder string
+	if parent == "" {
+		remainder = target
+	} else {
+		remainder = strings.TrimSuffix(target, "."+parent)
+	}
+	labels := strings.Split(remainder, ".")
+	chain := make([]string, 0, len(labels))
+	current := parent
+	for i := len(labels) - 1; i >= 0; i-- {
+		if current == "" {
+			current = labels[i]
+		} else {
+			current = labels[i] + "." + current
+		}
+		chain = append(chain, current)
+	}
+	return chain
+}
+
+func (s *Server) secWalkToZone(parentServers []string, startCtx secCtx, target string) (secCtx, error) {
+	chain := zoneChain(startCtx.zone, target)
+	if len(chain) == 0 {
+		return startCtx, nil
+	}
+	walkCtx := startCtx
+	for _, zone := range chain {
+		if cached := s.dnssecVal.LookupZoneKeys(zone); cached != nil {
+			walkCtx = secCtx{zone: zone, keys: cached}
+			continue
+		}
+		keys, err := s.secEstablishIntermediateKeys(parentServers, walkCtx, zone)
+		if err != nil {
+			return secCtx{}, fmt.Errorf("%s: %w", zone, err)
+		}
+		walkCtx = secCtx{zone: zone, keys: keys}
+	}
+	return walkCtx, nil
+}
+
+func (s *Server) secEstablishIntermediateKeys(parentServers []string, parentCtx secCtx, zone string) (map[uint16]dnssec.DNSKEY, error) {
+	var dsResp *dns.Message
+	var lastErr error
+	for _, sv := range parentServers {
+		resp, err := s.query(sv+":53", zone, dns.TypeDS)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		dsResp = resp
+		break
+	}
+	if dsResp == nil {
+		return nil, fmt.Errorf("DS query failed: %w", lastErr)
+	}
+
+	dsRRs := secFilterTypeOwner(dsResp.Answers, dns.TypeDS, zone)
+	rrsigs := secFilterType(dsResp.Answers, dns.TypeRRSIG)
+	if len(dsRRs) == 0 {
+		dsRRs = secFilterTypeOwner(dsResp.Authority, dns.TypeDS, zone)
+		rrsigs = secFilterType(dsResp.Authority, dns.TypeRRSIG)
+	}
+	if len(dsRRs) == 0 {
+		return nil, fmt.Errorf("no DS records returned for %s", zone)
+	}
+	if err := dnssec.VerifyAnyRRSIG(parentCtx.keys, dsRRs, rrsigs, dns.TypeDS, dsResp.Raw); err != nil {
+		return nil, fmt.Errorf("DS RRSIG: %w", err)
+	}
+
+	var parsedDS []dnssec.DS
+	for _, rr := range dsRRs {
+		if d, e := dnssec.ParseDS(rr); e == nil {
+			parsedDS = append(parsedDS, d)
+		}
+	}
+
+	dnskeyMsg, ferr := s.secFetchDNSKEY(parentServers, zone)
+	if ferr != nil {
+		return nil, fmt.Errorf("DNSKEY fetch: %w", ferr)
+	}
+	dnskeyRRs := secFilterType(dnskeyMsg.Answers, dns.TypeDNSKEY)
+	dnskeyRRSIGs := secFilterType(dnskeyMsg.Answers, dns.TypeRRSIG)
+	validatedKeys, verr := s.dnssecVal.ValidateZoneDNSKEY(zone, dnskeyRRs, dnskeyRRSIGs, parsedDS, dnskeyMsg.Raw)
+	if verr != nil {
+		return nil, fmt.Errorf("DNSKEY chain: %w", verr)
+	}
+
+	var ttl uint32 = 3600
+	if len(dnskeyRRs) > 0 {
+		ttl = dnskeyRRs[0].TTL
+	}
+	s.dnssecVal.CacheZoneKeys(zone, validatedKeys, ttl)
+	return validatedKeys, nil
 }
 
 func secDelegatedZone(m *dns.Message) string {
